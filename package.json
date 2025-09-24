@@ -1,0 +1,13 @@
+{
+  "name": "sticky3d",
+  "private": true,
+  "packageManager": "pnpm@10.17.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "pnpm -C apps/web dev",
+    "dev:server": "pnpm -C apps/server dev"
+  }
+}
