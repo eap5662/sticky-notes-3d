@@ -28,7 +28,7 @@ export const CAMERA_CLAMPS = {
   screen: {
     yaw: { min: (-15 * Math.PI) / 180, max: (15 * Math.PI) / 180 },
     pitch: { min: (-10 * Math.PI) / 180, max: (10 * Math.PI) / 180 },
-    dolly: { min: 0.7, max: 1.1 }, // ~70–85% screen fill
+    dolly: { min: 0.5, max: 1.2 }, // ~70–85% screen fill
   },
 } as const;
 

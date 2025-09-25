@@ -53,19 +53,34 @@ export function Surfaces() {
 
   return (
     <>
+      {/* Background tint so planes don’t blend into pure black */}
+      <color attach="background" args={["#0b0b0f"]} />
+
+      {/* Subtle world grid to give orientation (XZ plane at y=0) */}
+      <gridHelper args={[10, 10]} position={[0, 0.001, 0]} />
+
       {geoms.map(({ surface, geom }) => (
-        <mesh key={surface.id} geometry={geom}>
-          <meshStandardMaterial
-            color={surface.kind === "desk" ? "#cfcfcf" : "#222"}
-            roughness={surface.kind === "desk" ? 0.9 : 1.0}
-            metalness={0.0}
-          />
-        </mesh>
+        <group key={surface.id}>
+          <mesh geometry={geom}>
+            <meshStandardMaterial
+              color={surface.kind === "desk" ? "#bfc2c5" : "#3a5ccc"} // monitor = blue-ish
+              roughness={surface.kind === "desk" ? 0.9 : 0.6}
+              metalness={0.05}
+            />
+          </mesh>
+
+          {/* Thin edges to help the silhouette pop */}
+          <lineSegments>
+            <edgesGeometry args={[geom]} />
+            <lineBasicMaterial linewidth={1} color={surface.kind === "desk" ? "#555" : "#88aaff"} />
+          </lineSegments>
+        </group>
       ))}
 
-      {/* Soft lighting so we see the planes without blowing out contrast */}
-      <ambientLight intensity={0.4} />
-      <directionalLight position={[2, 3, 2]} intensity={0.8} />
+      {/* Lighting: hemisphere for ambient tint + key + fill */}
+      <hemisphereLight intensity={0.6} groundColor={"#262626"} />
+      <directionalLight position={[2, 3, 2]} intensity={0.9} />
+      <directionalLight position={[-2, 1.5, -1]} intensity={0.4} />
     </>
   );
 }
