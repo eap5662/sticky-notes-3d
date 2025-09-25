@@ -9,6 +9,7 @@ import ScreenViewController from "@/canvas/Cameras/ScreenViewController";
 import { Surfaces } from "@/canvas/surfaceRendering";
 import { getSurface } from "@/canvas/surfaces";
 import { planeProject } from "@/canvas/math/plane";
+import DebugHud from "@/canvas/debugHud";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -50,21 +51,24 @@ export default function SceneRoot() {
   }, [setMode]);
 
   return (
-    <Canvas
-      camera={{ position: [0, 1.2, 2.5], fov: 50 }}
-      dpr={[1, 1.5]}
-      frameloop="demand"
-      gl={{ powerPreference: "low-power" }}
-      onCreated={({ camera, gl }) => {
-        cameraRef.current = camera as THREE.PerspectiveCamera;
-        canvasElRef.current = gl.domElement as HTMLCanvasElement; // <-- real canvas
-      }}
-      onPointerDown={onPointerDown} // typed for the wrapper <div>
-    >
-      <Suspense fallback={null}>
-        <Surfaces />
-        {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
-      </Suspense>
-    </Canvas>
+    <div className="relative">
+      <DebugHud />
+      <Canvas
+        camera={{ position: [0, 1.2, 2.5], fov: 50 }}
+        dpr={[1, 1.5]}
+        frameloop="demand"
+        gl={{ powerPreference: "low-power" }}
+        onCreated={({ camera, gl }) => {
+          cameraRef.current = camera as THREE.PerspectiveCamera;
+          canvasElRef.current = gl.domElement as HTMLCanvasElement;
+        }}
+        onPointerDown={onPointerDown}
+      >
+        <Suspense fallback={null}>
+          <Surfaces />
+          {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
+        </Suspense>
+      </Canvas>
+    </div>
   );
 }
