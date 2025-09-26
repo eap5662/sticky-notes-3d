@@ -9,6 +9,7 @@ import ScreenViewController from "@/canvas/Cameras/ScreenViewController";
 import { Surfaces } from "@/canvas/surfaceRendering";
 import { getSurface } from "@/canvas/surfaces";
 import { planeProject } from "@/canvas/math/plane";
+import DebugHud from "@/canvas/debugHud";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -50,21 +51,34 @@ export default function SceneRoot() {
   }, [setMode]);
 
   return (
-    <Canvas
-      camera={{ position: [0, 1.2, 2.5], fov: 50 }}
-      dpr={[1, 1.5]}
-      frameloop="demand"
-      gl={{ powerPreference: "low-power" }}
-      onCreated={({ camera, gl }) => {
-        cameraRef.current = camera as THREE.PerspectiveCamera;
-        canvasElRef.current = gl.domElement as HTMLCanvasElement; // <-- real canvas
-      }}
-      onPointerDown={onPointerDown} // typed for the wrapper <div>
-    >
-      <Suspense fallback={null}>
-        <Surfaces />
-        {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
-      </Suspense>
-    </Canvas>
+    <div className="relative">
+      <DebugHud />
+      <Canvas
+        camera={{ position: [0, 1.2, 2.5], fov: 50 }}
+        dpr={[1, 1.5]}
+        frameloop="always"
+        gl={{ powerPreference: "low-power" }}
+        onCreated={({ camera, gl, scene }) => {
+          cameraRef.current = camera as THREE.PerspectiveCamera;
+          canvasElRef.current = gl.domElement as HTMLCanvasElement;
+
+          // Color space & tone mapping (nicer highlights; avoids blown whites)
+          gl.outputColorSpace = THREE.SRGBColorSpace;
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.1;
+
+           // Background + fog (depth separation)
+          const bg = new THREE.Color(0x0b0d12); // deep slate-blue
+          gl.setClearColor(bg, 1);
+          scene.fog = new THREE.Fog(bg, 6, 16);
+        }}
+        onPointerDown={onPointerDown}
+      >
+        <Suspense fallback={null}>
+          <Surfaces />
+          {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
+        </Suspense>
+      </Canvas>
+    </div>
   );
 }
