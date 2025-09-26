@@ -56,11 +56,21 @@ export default function SceneRoot() {
       <Canvas
         camera={{ position: [0, 1.2, 2.5], fov: 50 }}
         dpr={[1, 1.5]}
-        frameloop="demand"
+        frameloop="always"
         gl={{ powerPreference: "low-power" }}
-        onCreated={({ camera, gl }) => {
+        onCreated={({ camera, gl, scene }) => {
           cameraRef.current = camera as THREE.PerspectiveCamera;
           canvasElRef.current = gl.domElement as HTMLCanvasElement;
+
+          // Color space & tone mapping (nicer highlights; avoids blown whites)
+          gl.outputColorSpace = THREE.SRGBColorSpace;
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.1;
+
+           // Background + fog (depth separation)
+          const bg = new THREE.Color(0x0b0d12); // deep slate-blue
+          gl.setClearColor(bg, 1);
+          scene.fog = new THREE.Fog(bg, 6, 16);
         }}
         onPointerDown={onPointerDown}
       >

@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import * as THREE from "three";
 
 /**
  * Camera modes:
@@ -113,13 +114,14 @@ const INITIAL_STATE: Omit<CameraState, "setMode" | "setPose" | "orbitBy" | "doll
  * Provide a sane, mode-specific default pose.
  * You can tune these without touching controller code.
  */
-function defaultPoseFor(mode: CameraMode) {
+export function defaultPoseFor(mode: CameraMode) {
   if (mode.kind === "desk") {
-    return clampPose(mode, 0, (-10 * Math.PI) / 180, 2.5);
+    return { yaw: THREE.MathUtils.degToRad(25), pitch: THREE.MathUtils.degToRad(8), dolly: 2.6 };
   }
   // screen
-  return clampPose(mode, 0, 0, 0.9);
+  return { yaw: THREE.MathUtils.degToRad(-12), pitch: THREE.MathUtils.degToRad(-6), dolly: 1.18 };
 }
+
 
 /**
  * Zustand store: central camera state + small set of ergonomic actions.
