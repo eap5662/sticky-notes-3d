@@ -1,4 +1,6 @@
 import surfacesJson from "@/data/surfaces.json";
+import * as THREE from "three";
+
 
 export type Vec3 = [number, number, number]; //define a 3D vector type
 

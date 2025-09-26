@@ -4,26 +4,8 @@ import * as THREE from "three";
 import { useMemo } from "react";
 import { getAllSurfaces, type Surface } from "@/canvas/surfaces";
 import { uvToWorld } from "@/canvas/math/plane";
+import { basisFromSurface } from '@/canvas/math/surfaces_math';
 
-function basisFromSurface(surface: Surface) { //helper
-  // U = "right" vector of the plane
-  const U = new THREE.Vector3().fromArray(surface.uAxis as any);
-  // V = "up" (or depth) vector of the plane
-  const V = new THREE.Vector3().fromArray(surface.vAxis as any);
-  // N = plane normal, computed from U × V
-  const N = new THREE.Vector3().copy(U).cross(V).normalize();
-  // O = origin (anchor point of the surface in world coords)
-  const O = new THREE.Vector3().fromArray(surface.origin as any);
-
-  // Step 1: make a rotation/scale basis
-  const M = new THREE.Matrix4().makeBasis(U, V, N);
-
-  // Step 2: add translation for the origin
-  const T = new THREE.Matrix4().makeTranslation(O.x, O.y, O.z);
-
-  // Step 3: combine: apply basis, then move to origin
-  return new THREE.Matrix4().multiplyMatrices(T, M);
-}
 
 function length(v: THREE.Vector3) { return v.length(); } //helper
 
