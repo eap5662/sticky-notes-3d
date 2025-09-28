@@ -1,5 +1,5 @@
 ﻿"use client";
-import { Suspense, useCallback, useEffect, useRef } from "react";
+import { Suspense, useCallback, useEffect, useRef, useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -10,6 +10,9 @@ import { Surfaces } from "@/canvas/surfaceRendering";
 import { getSurface } from "@/canvas/surfaces";
 import { planeProject } from "@/canvas/math/plane";
 import DebugHud from "@/canvas/debugHud";
+import type { TableStandConfig } from "@/canvas/mounts/types";
+import { computePose } from "@/canvas/mounts/pose";
+import { TableStandMount } from "@/canvas/mounts/variants/tableStand";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -50,6 +53,22 @@ export default function SceneRoot() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setMode]);
 
+  // ---- TableStand mount config + pose ----
+  const mountCfg: TableStandConfig = useMemo(() => ({
+    deskAnchor: { surfaceId: "desk", u: 0.52, v: 0.42, lift: 0 },
+    base: { w: 0.22, d: 0.24, t: 0.02, fillet: 0.01, minClearance: 2 }, // mm
+    neck: { width: 0.035, depth: 0.025 },
+    plate: { w: 0.12, h: 0.10, t: 0.004 },
+  }), []);
+
+  const deskSurface = getSurface("desk");
+  const monitorSurface = getSurface("monitor1");
+  const socket = { u: 0, v: 0, lift: 0 };
+  const pose = useMemo(
+    () => computePose({ deskSurface, monitorSurface, socket, deskAnchor: mountCfg.deskAnchor }, mountCfg),
+    [deskSurface, monitorSurface, socket, mountCfg]
+  );
+
   return (
     <div className="relative">
       <DebugHud />
@@ -76,6 +95,7 @@ export default function SceneRoot() {
       >
         <Suspense fallback={null}>
           <Surfaces />
+          <TableStandMount pose={pose} config={mountCfg} showDebug />
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
         </Suspense>
       </Canvas>
