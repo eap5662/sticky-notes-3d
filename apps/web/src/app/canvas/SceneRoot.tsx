@@ -13,6 +13,8 @@ import DebugHud from "@/canvas/debugHud";
 import type { TableStandConfig } from "@/canvas/mounts/types";
 import { computePose } from "@/canvas/mounts/pose";
 import { TableStandMount } from "@/canvas/mounts/variants/tableStand";
+import { DeskProp } from "@/canvas/props/DeskProp"
+import { MonitorProp } from "@/canvas/props/MonitorProp"
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -94,6 +96,10 @@ export default function SceneRoot() {
         onPointerDown={onPointerDown}
       >
         <Suspense fallback={null}>
+          {/* GLTF props that also register surfaces */}
+          <DeskProp url="/models/DeskTopPlane.glb" />
+          <MonitorProp url="/models/monitor_processed.glb" />
+          
           <Surfaces />
           <TableStandMount pose={pose} config={mountCfg} showDebug />
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
