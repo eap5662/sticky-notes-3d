@@ -14,7 +14,7 @@ export type PoseInputs = {
 };
 
 // Project (u,v) to world using the shared math; apply optional lifts along each surface normal.
-export function computePose(inputs: PoseInputs, _table?: TableStandConfig): PoseOutputs {
+export function computePose(inputs: PoseInputs): PoseOutputs {
   const { deskSurface, monitorSurface, socket, deskAnchor } = inputs;
 
   const { U: U_d, V: V_d, N: N_d } = getBasis(deskSurface);

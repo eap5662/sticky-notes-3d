@@ -3,7 +3,7 @@ import * as React from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { surfaceFromNode } from './surfaceAdapter';
-import { registerSurface, unregisterSurface } from './propSurfaces';
+import { registerSurface, unregisterSurface } from '@/canvas/surfaces';
 import type { Surface } from '@/canvas/surfaces';
 
 type SurfaceReg = { id: Surface['id']; kind: Surface['kind']; nodeName: string };
@@ -67,4 +67,5 @@ export default function GLTFProp({ url, registerSurfaces = [], position, rotatio
 }
 
 // drei needs this for TS; optional preloading utility
-useGLTF.preload as (url: string) => void;
+export const preloadGLTF: (url: string) => void = useGLTF.preload;
+

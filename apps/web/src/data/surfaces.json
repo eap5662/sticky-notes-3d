@@ -1,22 +1,3 @@
 {
-  "surfaces": [
-    {
-      "id": "desk",
-      "kind": "desk",
-      "origin": [-0.8, 0.0, 0.6],   
-      "uAxis": [1.6, 0, 0],         
-      "vAxis": [0, 0, -1.0],        
-      "zLift": 0.01
-    },
-    {
-      "id": "monitor1",
-      "kind": "monitor",
-      "origin": [-0.3, 0.45, -0.1], 
-      "uAxis": [1.0, 0, 0],         
-      "vAxis": [0, -0.6, 0],       
-      "zLift": 0.002,
-      "clip": [0, 0, 1, 1]
-    }
-  ]
+  "surfaces": []
 }
-
