@@ -1,0 +1,22 @@
+﻿import GLTFProp from './GLTFProp';
+
+type DeskPropProps = {
+  url: string;
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: number | [number, number, number];
+};
+
+export function DeskProp({ url, position, rotation, scale }: DeskPropProps) {
+  return (
+    <GLTFProp
+      url={url}
+      position={position}
+      rotation={rotation}
+      scale={scale}
+      propId="desk"
+      registerSurfaces={[{ id: 'desk', kind: 'desk', nodeName: 'DeskTopPlane', options: { normalSide: 'positive' } }]}
+    />
+  );
+}
+
