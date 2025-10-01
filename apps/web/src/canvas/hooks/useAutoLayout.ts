@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+﻿import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
 import { CAMERA_CLAMPS, useCamera } from "@/state/cameraSlice";
@@ -6,6 +6,7 @@ import type { SurfaceMeta } from "@/state/surfaceMetaStore";
 import type { PropBounds } from "@/state/propBoundsStore";
 import { useSurface, useSurfaceMeta } from "./useSurfaces";
 import { usePropBounds } from "./usePropBounds";
+import { useLayoutOverridesState } from "./useLayoutOverrides";
 import {
   setLayoutState,
   peekLayoutState,
@@ -248,6 +249,7 @@ function solveMonitor(
   currentBounds: PropBounds | null,
   baseMeta: SurfaceMeta | null,
   baseBounds: PropBounds | null,
+  manualOffsets?: { lateral: number; depth: number },
 ): MonitorPlacement | null {
   const up = toVec3(frame.up);
   const right = toVec3(frame.right);
@@ -274,14 +276,17 @@ function solveMonitor(
     liftDelta = desiredPlane - bottom.dot(up);
   }
 
+  const manualLateral = manualOffsets?.lateral ?? 0;
+  const manualDepth = manualOffsets?.depth ?? 0;
+
   const deskCenter = boundsCenter(frame.bounds);
   const boundsForAlignment = referenceBounds ?? baseBounds ?? currentBounds;
-  let lateralDelta = 0;
-  let depthDelta = 0;
+  let lateralDelta = manualLateral;
+  let depthDelta = manualDepth;
   if (boundsForAlignment) {
     const monitorCenter = boundsCenter(boundsForAlignment);
-    lateralDelta = deskCenter.clone().sub(monitorCenter).dot(right);
-    depthDelta = deskCenter.clone().sub(monitorCenter).dot(forward);
+    lateralDelta += deskCenter.clone().sub(monitorCenter).dot(right);
+    depthDelta += deskCenter.clone().sub(monitorCenter).dot(forward);
 
     const deskSpanRight = spanAlongAxis(frame.bounds, right);
     const monitorSpanRight = spanAlongAxis(boundsForAlignment, right);
@@ -338,6 +343,7 @@ function posesApproximatelyEqual(a: LayoutPose, b: LayoutPose, eps = 1e-3) {
 }
 
 export function useAutoLayout() {
+  const overrides = useLayoutOverridesState();
   const deskSurface = useSurface("desk");
   const deskMeta = useSurfaceMeta("desk");
   const deskBounds = usePropBounds("desk");
@@ -382,6 +388,7 @@ export function useAutoLayout() {
       monitorBounds ?? null,
       initialMonitorMetaRef.current,
       initialMonitorBoundsRef.current,
+      { lateral: overrides.monitorLateral, depth: overrides.monitorDepth },
     );
 
     const prevLayout = peekLayoutState();
@@ -421,10 +428,19 @@ export function useAutoLayout() {
     deskSurface,
     monitorMeta,
     monitorBounds,
+    overrides.monitorLateral,
+    overrides.monitorDepth,
   ]);
 
   return useLayoutFrameState();
 }
+
+
+
+
+
+
+
 
 
 

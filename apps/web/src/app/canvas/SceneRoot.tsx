@@ -14,6 +14,8 @@ import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayou
 import { DeskProp } from "@/canvas/props/DeskProp";
 import { MonitorProp } from "@/canvas/props/MonitorProp";
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
+import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
+import LayoutControls from "@/canvas/LayoutControls";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -23,6 +25,9 @@ export default function SceneRoot() {
   const monitorSurface = useSurface("monitor1");
 
   const layoutState = useAutoLayout();
+  const overrides = useLayoutOverridesState();
+  const deskYawRad = THREE.MathUtils.degToRad(overrides.deskYawDeg);
+  const deskRotation: [number, number, number] = [0, deskYawRad, 0];
   const monitorPlacement = layoutState.monitorPlacement;
 
   const handleLayoutWarnings = useCallback((warnings: LayoutWarning[]) => {
@@ -84,6 +89,7 @@ export default function SceneRoot() {
   return (
     <div className="relative h-[70vh] min-h-[540px]">
       <DebugHud />
+      <LayoutControls />
       <Canvas
         style={{ width: "100%", height: "100%" }}
         camera={{ position: [0, 1.35, 3.6], fov: 48 }}
@@ -105,7 +111,7 @@ export default function SceneRoot() {
         onPointerDown={onPointerDown}
       >
         <Suspense fallback={null}>
-          <DeskProp url="/models/DeskTopPlane.glb" />
+          <DeskProp url="/models/DeskTopPlane.glb" rotation={deskRotation} />
           <MonitorProp
             url="/models/monitor_processed.glb"
             position={monitorPosition}
