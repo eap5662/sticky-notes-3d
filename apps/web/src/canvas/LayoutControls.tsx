@@ -1,4 +1,4 @@
-﻿import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { rotateDesk, nudgeMonitor, resetLayoutOverrides } from "@/state/layoutOverridesStore";
@@ -107,12 +107,20 @@ function HoldButton({ onActivate, className, children, holdIntervalMs }: HoldBut
   );
 }
 
-export default function LayoutControls() {
+type LayoutControlsProps = {
+  className?: string;
+};
+
+export default function LayoutControls({ className = "" }: LayoutControlsProps = {}) {
   const overrides = useLayoutOverridesState();
   const [isOpen, setIsOpen] = useState(false);
 
+  const containerClass = ["pointer-events-none flex flex-col items-end gap-2", className]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
+    <div className={containerClass}>
       <button
         type="button"
         className="pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"

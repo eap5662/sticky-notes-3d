@@ -1,4 +1,4 @@
-﻿import GLTFProp from './GLTFProp';
+import GLTFProp from './GLTFProp';
 
 type DeskPropProps = {
   url: string;
@@ -14,9 +14,11 @@ export function DeskProp({ url, position, rotation, scale }: DeskPropProps) {
       position={position}
       rotation={rotation}
       scale={scale}
+      anchor={{ type: 'bbox', align: { x: 'center', y: 'max', z: 'center' } }}
       propId="desk"
       registerSurfaces={[{ id: 'desk', kind: 'desk', nodeName: 'DeskTopPlane', options: { normalSide: 'positive' } }]}
     />
   );
 }
+
 

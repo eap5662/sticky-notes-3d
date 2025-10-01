@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
 import { CAMERA_CLAMPS, useCamera } from "@/state/cameraSlice";
@@ -6,6 +6,7 @@ import type { SurfaceMeta } from "@/state/surfaceMetaStore";
 import type { PropBounds } from "@/state/propBoundsStore";
 import { useSurface, useSurfaceMeta } from "./useSurfaces";
 import { usePropBounds } from "./usePropBounds";
+import { usePropScale } from "./usePropScale";
 import { useLayoutOverridesState } from "./useLayoutOverrides";
 import {
   setLayoutState,
@@ -53,6 +54,35 @@ function cloneBounds(bounds: PropBounds | null): PropBounds | null {
   return {
     min: [...bounds.min] as PropBounds["min"],
     max: [...bounds.max] as PropBounds["max"],
+  };
+}
+
+function hasNonUnitScale(scale: readonly number[], epsilon = 1e-4) {
+  return (
+    Math.abs(scale[0] - 1) > epsilon ||
+    Math.abs(scale[1] - 1) > epsilon ||
+    Math.abs(scale[2] - 1) > epsilon
+  );
+}
+
+function scaleBoundsFromFoot(bounds: PropBounds, scale: readonly number[]): PropBounds {
+  const anchorX = (bounds.min[0] + bounds.max[0]) / 2;
+  const anchorY = bounds.min[1];
+  const anchorZ = (bounds.min[2] + bounds.max[2]) / 2;
+
+  const scaleAxis = (value: number, anchor: number, factor: number) => anchor + (value - anchor) * factor;
+
+  return {
+    min: [
+      scaleAxis(bounds.min[0], anchorX, scale[0]),
+      scaleAxis(bounds.min[1], anchorY, scale[1]),
+      scaleAxis(bounds.min[2], anchorZ, scale[2]),
+    ],
+    max: [
+      scaleAxis(bounds.max[0], anchorX, scale[0]),
+      scaleAxis(bounds.max[1], anchorY, scale[1]),
+      scaleAxis(bounds.max[2], anchorZ, scale[2]),
+    ],
   };
 }
 
@@ -250,6 +280,7 @@ function solveMonitor(
   baseMeta: SurfaceMeta | null,
   baseBounds: PropBounds | null,
   manualOffsets?: { lateral: number; depth: number },
+  scaledBounds: PropBounds | null = null,
 ): MonitorPlacement | null {
   const up = toVec3(frame.up);
   const right = toVec3(frame.right);
@@ -260,7 +291,7 @@ function solveMonitor(
     : new THREE.Vector3(frame.center[0], frame.center[1], frame.center[2]);
   const desiredPlane = deskTop.dot(up) + MONITOR_CLEARANCE;
 
-  const referenceBounds = baseBounds ?? currentBounds;
+  const referenceBounds = scaledBounds ?? baseBounds ?? currentBounds;
   if (!referenceBounds && !baseMeta) {
     return null;
   }
@@ -280,7 +311,7 @@ function solveMonitor(
   const manualDepth = manualOffsets?.depth ?? 0;
 
   const deskCenter = boundsCenter(frame.bounds);
-  const boundsForAlignment = referenceBounds ?? baseBounds ?? currentBounds;
+  const boundsForAlignment = scaledBounds ?? referenceBounds ?? baseBounds ?? currentBounds;
   let lateralDelta = manualLateral;
   let depthDelta = manualDepth;
   if (boundsForAlignment) {
@@ -350,6 +381,8 @@ export function useAutoLayout() {
 
   const monitorMeta = useSurfaceMeta("monitor1");
   const monitorBounds = usePropBounds("monitor1");
+  const monitorScale = usePropScale("monitor1");
+  const [monitorScaleX, monitorScaleY, monitorScaleZ] = monitorScale;
 
   const initialMonitorMetaRef = useRef<SurfaceMeta | null>(null);
   const initialMonitorBoundsRef = useRef<PropBounds | null>(null);
@@ -381,14 +414,21 @@ export function useAutoLayout() {
     const frame = buildLayoutFrame(deskMeta, deskBounds);
     const cameraSolution = solveCamera(frame, deskBounds, monitorBounds ?? null);
 
+    const monitorScaleVec: [number, number, number] = [monitorScaleX, monitorScaleY, monitorScaleZ];
+    const baseMonitorBounds = initialMonitorBoundsRef.current;
+    const scaledMonitorBounds = baseMonitorBounds && hasNonUnitScale(monitorScaleVec)
+      ? scaleBoundsFromFoot(baseMonitorBounds, monitorScaleVec)
+      : baseMonitorBounds;
+
     const placementCandidate = solveMonitor(
       frame,
       deskSurface,
       monitorMeta,
       monitorBounds ?? null,
       initialMonitorMetaRef.current,
-      initialMonitorBoundsRef.current,
+      baseMonitorBounds,
       { lateral: overrides.monitorLateral, depth: overrides.monitorDepth },
+      scaledMonitorBounds,
     );
 
     const prevLayout = peekLayoutState();
@@ -430,18 +470,11 @@ export function useAutoLayout() {
     monitorBounds,
     overrides.monitorLateral,
     overrides.monitorDepth,
+    monitorScaleX,
+    monitorScaleY,
+    monitorScaleZ,
   ]);
 
   return useLayoutFrameState();
 }
-
-
-
-
-
-
-
-
-
-
 
