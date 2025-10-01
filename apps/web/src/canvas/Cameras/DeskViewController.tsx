@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 /**
  * DeskViewController
  * ------------------
@@ -23,7 +23,7 @@ import { useCamera, clampPose } from "@/state/cameraSlice";
  * The camera orbits around this 3D point. Pick a spot that keeps the desk + monitor visible.
  * (Units are meters in world space.)
  */
-const DESK_TARGET = { x: 0.2, y: 0.35, z: -0.2 };
+const DESK_TARGET = { x: 0.1, y: 0.33, z: -0.35 };
 
 /**
  * Sensitivity constants for mouse controls.
@@ -33,7 +33,7 @@ const DESK_TARGET = { x: 0.2, y: 0.35, z: -0.2 };
  * Tip: Smaller numbers = slower, more precise movement.
  */
 const ORBIT_SPEED = 0.003; // radians per px
-const DOLLY_STEP = 0.1;    // meters per wheel notch (sign controlled by deltaY)
+const DOLLY_STEP = 0.15;   // meters per wheel notch (sign controlled by deltaY)
 
 export default function DeskViewController() {
   /**

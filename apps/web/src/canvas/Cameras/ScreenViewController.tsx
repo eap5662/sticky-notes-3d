@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 /**
  * ScreenViewController
  * --------------------
  * Controls the camera while you're in the "screen" mode (close-up of a monitor surface).
  *
- * 🔁 How this compares to DeskViewController:
+ * ðŸ” How this compares to DeskViewController:
  * - SAME: It's a behavior-only component (returns null), uses React Three Fiber hooks,
  *   subscribes to the same Zustand store (yaw/pitch/dolly), and attaches wheel + drag events.
  * - DIFFERENT:
@@ -26,7 +26,7 @@ import { uvToWorld } from "@/canvas/math/plane";
  * We keep these a bit gentler than desk mode because you're closer to the subject.
  */
 const ORBIT_SPEED = 0.0025; // radians per px (slower than desk)
-const DOLLY_STEP = 0.06;    // meters per wheel notch (smaller than desk)
+const DOLLY_STEP = 0.1;    // meters per wheel notch (smaller than desk)
 
 export default function ScreenViewController() {
   /**
@@ -63,7 +63,7 @@ export default function ScreenViewController() {
 
   /**
    * EFFECT 1: Apply (yaw, pitch, dolly) to the camera, looking at the dynamic target.
-   * 🔁 VS Desk: Same math, different target point (here: monitor center).
+   * ðŸ” VS Desk: Same math, different target point (here: monitor center).
    */
   useEffect(() => {
     if (mode.kind !== "screen" || !target) return;
@@ -89,7 +89,7 @@ export default function ScreenViewController() {
 
   /**
    * EFFECT 2: Wheel to dolly (zoom).
-   * 🔁 VS Desk: Same listener pattern, smaller DOLLY_STEP for finer control.
+   * ðŸ” VS Desk: Same listener pattern, smaller DOLLY_STEP for finer control.
    */
   useEffect(() => {
     if (mode.kind !== "screen") return;
@@ -106,7 +106,7 @@ export default function ScreenViewController() {
 
   /**
    * EFFECT 3: Drag to orbit.
-   * 🔁 VS Desk: Same event wiring, same mapping of dx->yaw and dy->pitch,
+   * ðŸ” VS Desk: Same event wiring, same mapping of dx->yaw and dy->pitch,
    *   but ORBIT_SPEED is reduced for tighter control in close-up view.
    */
   useEffect(() => {
@@ -153,7 +153,7 @@ export default function ScreenViewController() {
 
   /**
    * EFFECT 4 (optional): Defensive clamping.
-   * 🔁 VS Desk: Same idea. The store actions already clamp; this just guards
+   * ðŸ” VS Desk: Same idea. The store actions already clamp; this just guards
    * against any external changes that might bypass actions.
    */
   useEffect(() => {

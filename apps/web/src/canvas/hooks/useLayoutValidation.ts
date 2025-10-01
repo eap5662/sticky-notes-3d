@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+﻿import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { SurfaceId } from '@/canvas/surfaces';
 import { useSurface, useSurfaceMeta } from './useSurfaces';
+import { usePropBounds } from './usePropBounds';
+import type { PropBounds } from '@/state/propBoundsStore';
 
 export type LayoutWarning = {
   id: string;
@@ -24,6 +26,22 @@ export type UseLayoutValidationOptions = {
 
 const toVec3 = (tuple: readonly number[]) => new THREE.Vector3(tuple[0], tuple[1], tuple[2]);
 
+function extremalPoint(bounds: PropBounds, normal: THREE.Vector3, pick: 'min' | 'max') {
+  const choose = (axis: number, minVal: number, maxVal: number) => {
+    const positive = axis >= 0;
+    if (pick === 'min') {
+      return positive ? minVal : maxVal;
+    }
+    return positive ? maxVal : minVal;
+  };
+
+  return new THREE.Vector3(
+    choose(normal.x, bounds.min[0], bounds.max[0]),
+    choose(normal.y, bounds.min[1], bounds.max[1]),
+    choose(normal.z, bounds.min[2], bounds.max[2])
+  );
+}
+
 export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
   const { monitorClearance = 0, tolerance = 0.002, onReport, enabled = true } = options;
 
@@ -31,6 +49,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
   const monitorSurface = useSurface('monitor1');
   const deskMeta = useSurfaceMeta('desk');
   const monitorMeta = useSurfaceMeta('monitor1');
+  const monitorBounds = usePropBounds('monitor1');
 
   const warnings = useMemo<LayoutWarning[]>(() => {
     if (!enabled) return [];
@@ -57,12 +76,21 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
     if (deskSurface && monitorSurface && deskMeta && monitorMeta) {
       const deskNormal = toVec3(deskMeta.normal).normalize();
       const deskTop = toVec3(deskSurface.origin);
-      const monitorCenter = toVec3(monitorMeta.center);
-      const monitorNormal = toVec3(monitorMeta.normal).normalize();
-      const monitorHalfThickness = monitorMeta.extents.thickness / 2;
-      const monitorBottom = monitorCenter.clone().sub(monitorNormal.clone().multiplyScalar(monitorHalfThickness));
-      const separation = monitorBottom.clone().sub(deskTop).dot(deskNormal);
-      if (separation < monitorClearance - tolerance) {
+      const deskTopProjection = deskTop.dot(deskNormal);
+
+      let separation: number | null = null;
+      if (monitorBounds) {
+        const monitorBottomPoint = extremalPoint(monitorBounds, deskNormal, 'min');
+        separation = monitorBottomPoint.dot(deskNormal) - deskTopProjection;
+      } else {
+        const monitorCenter = toVec3(monitorMeta.center);
+        const monitorNormal = toVec3(monitorMeta.normal).normalize();
+        const monitorHalfThickness = monitorMeta.extents.thickness / 2;
+        const monitorBottom = monitorCenter.clone().sub(monitorNormal.clone().multiplyScalar(monitorHalfThickness));
+        separation = monitorBottom.clone().sub(deskTop).dot(deskNormal);
+      }
+
+      if (separation !== null && separation < monitorClearance - tolerance) {
         next.push({
           id: 'monitor-below-desk',
           severity: 'error',
@@ -74,7 +102,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
     }
 
     return next;
-  }, [deskSurface, monitorSurface, deskMeta, monitorMeta, tolerance, monitorClearance, enabled]);
+  }, [deskSurface, monitorSurface, deskMeta, monitorMeta, monitorBounds, tolerance, monitorClearance, enabled]);
 
   const lastReportRef = useRef<string>('');
   useEffect(() => {

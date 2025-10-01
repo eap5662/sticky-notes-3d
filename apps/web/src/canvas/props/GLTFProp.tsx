@@ -1,10 +1,10 @@
-
-import * as React from 'react';
+﻿import * as React from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { extractSurfaceFromNode, type SurfaceExtractOptions } from './surfaceAdapter';
 import { registerSurface, unregisterSurface } from '@/canvas/surfaces';
 import { setSurfaceMeta, clearSurfaceMeta } from '@/state/surfaceMetaStore';
+import { setPropBounds, clearPropBounds, type PropId } from '@/state/propBoundsStore';
 import type { Surface } from '@/canvas/surfaces';
 
 type SurfaceReg = {
@@ -27,11 +27,23 @@ type Props = {
   scale?: number | [number, number, number];
   /** Callback with the root + a lookup of child nodes by name */
   onLoaded?: (root: THREE.Object3D, nodes: Record<string, THREE.Object3D>) => void;
+  /** Optional: track the prop's world-space bounds in the global store */
+  propId?: PropId;
 };
 
-export default function GLTFProp({ url, registerSurfaces = [], position, rotation, scale, onLoaded }: Props) {
+export default function GLTFProp({
+  url,
+  registerSurfaces = [],
+  position,
+  rotation,
+  scale,
+  onLoaded,
+  propId,
+}: Props) {
   // Load once; drei caches by URL. The `scene` is a ready-to-insert Object3D tree.
   const { scene } = useGLTF(url);
+
+  const groupRef = React.useRef<THREE.Group>(null);
 
   // Build a name->node lookup for convenience
   const nodes = React.useMemo(() => {
@@ -83,8 +95,28 @@ export default function GLTFProp({ url, registerSurfaces = [], position, rotatio
     };
   }, [scene, nodes, registerSurfaces, url, onLoaded]);
 
+  // Track world-space bounds for downstream layout heuristics (desk clearance, etc.)
+  React.useEffect(() => {
+    if (!propId) return;
+    const group = groupRef.current;
+    if (!group) return;
+
+    group.updateWorldMatrix(true, true);
+    const bounds = new THREE.Box3().setFromObject(group);
+    if (bounds.isEmpty()) return;
+
+    setPropBounds(propId, { min: toVec3(bounds.min), max: toVec3(bounds.max) });
+  }, [propId, scene.uuid, position, rotation, scale]);
+
+  React.useEffect(() => {
+    if (!propId) return;
+    return () => {
+      clearPropBounds(propId);
+    };
+  }, [propId]);
+
   return (
-    <group position={position} rotation={rotation} scale={scale}>
+    <group ref={groupRef} position={position} rotation={rotation} scale={scale}>
       {/* Render the GLTF content */}
       <primitive object={scene} />
     </group>

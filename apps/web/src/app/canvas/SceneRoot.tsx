@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
@@ -14,19 +14,43 @@ import { useSurface, useSurfaceMeta } from "@/canvas/hooks/useSurfaces";
 import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayoutValidation";
 import { DeskProp } from "@/canvas/props/DeskProp";
 import { MonitorProp } from "@/canvas/props/MonitorProp";
+import { usePropBounds } from "@/canvas/hooks/usePropBounds";
+import type { PropBounds } from "@/state/propBoundsStore";
 
 const tupleToVec3 = (values: readonly number[]) => new THREE.Vector3(values[0], values[1], values[2]);
 
 function cloneSurfaceMeta(meta: SurfaceMeta): SurfaceMeta {
   return {
-    center: [...meta.center] as SurfaceMeta['center'],
-    normal: [...meta.normal] as SurfaceMeta['normal'],
-    uDir: [...meta.uDir] as SurfaceMeta['uDir'],
-    vDir: [...meta.vDir] as SurfaceMeta['vDir'],
+    center: [...meta.center] as SurfaceMeta["center"],
+    normal: [...meta.normal] as SurfaceMeta["normal"],
+    uDir: [...meta.uDir] as SurfaceMeta["uDir"],
+    vDir: [...meta.vDir] as SurfaceMeta["vDir"],
     extents: { ...meta.extents },
   };
 }
 
+function clonePropBounds(bounds: PropBounds): PropBounds {
+  return {
+    min: [...bounds.min] as PropBounds["min"],
+    max: [...bounds.max] as PropBounds["max"],
+  };
+}
+
+function extremalPoint(bounds: PropBounds, normal: THREE.Vector3, pick: "min" | "max") {
+  const choose = (axis: number, minVal: number, maxVal: number) => {
+    const positive = axis >= 0;
+    if (pick === "min") {
+      return positive ? minVal : maxVal;
+    }
+    return positive ? maxVal : minVal;
+  };
+
+  return new THREE.Vector3(
+    choose(normal.x, bounds.min[0], bounds.max[0]),
+    choose(normal.y, bounds.min[1], bounds.max[1]),
+    choose(normal.z, bounds.min[2], bounds.max[2])
+  );
+}
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -36,6 +60,7 @@ export default function SceneRoot() {
   const monitorSurface = useSurface("monitor1");
   const deskMeta = useSurfaceMeta("desk");
   const monitorMeta = useSurfaceMeta("monitor1");
+  const monitorBounds = usePropBounds("monitor1");
 
   const surfaceReady = deskSurface && monitorSurface;
 
@@ -45,6 +70,13 @@ export default function SceneRoot() {
       initialMonitorMetaRef.current = cloneSurfaceMeta(monitorMeta);
     }
   }, [monitorMeta]);
+
+  const initialMonitorBoundsRef = useRef<PropBounds | null>(null);
+  useEffect(() => {
+    if (!initialMonitorBoundsRef.current && monitorBounds) {
+      initialMonitorBoundsRef.current = clonePropBounds(monitorBounds);
+    }
+  }, [monitorBounds]);
 
   const handleLayoutWarnings = useCallback((warnings: LayoutWarning[]) => {
     warnings.forEach((warning) => {
@@ -56,20 +88,32 @@ export default function SceneRoot() {
 
   const monitorOffset = useMemo(() => {
     if (!deskSurface || !deskMeta) return undefined;
-    const baseMeta = initialMonitorMetaRef.current ?? monitorMeta;
-    if (!baseMeta) return undefined;
 
     const deskNormal = tupleToVec3(deskMeta.normal).normalize();
     const deskTop = tupleToVec3(deskSurface.origin);
     const clearance = 0.0015; // 1.5 mm lift to avoid z-fighting
-    const desiredBottom = deskTop.clone().add(deskNormal.clone().multiplyScalar(clearance));
+    const desiredProjection = deskTop.dot(deskNormal) + clearance;
+
+    const baseBounds = initialMonitorBoundsRef.current ?? monitorBounds;
+    if (baseBounds) {
+      const baseBottomPoint = extremalPoint(baseBounds, deskNormal, "min");
+      const baseProjection = baseBottomPoint.dot(deskNormal);
+      const delta = desiredProjection - baseProjection;
+      return deskNormal.clone().multiplyScalar(delta).toArray() as [number, number, number];
+    }
+
+    const baseMeta = initialMonitorMetaRef.current ?? monitorMeta;
+    if (!baseMeta) return undefined;
 
     const baseCenter = tupleToVec3(baseMeta.center);
     const baseNormal = tupleToVec3(baseMeta.normal).normalize();
     const baseBottom = baseCenter.clone().sub(baseNormal.clone().multiplyScalar(baseMeta.extents.thickness / 2));
 
-    return desiredBottom.sub(baseBottom).toArray() as [number, number, number];
-  }, [deskSurface, deskMeta, monitorMeta]);
+    return deskNormal
+      .clone()
+      .multiplyScalar(desiredProjection - baseBottom.dot(deskNormal))
+      .toArray() as [number, number, number];
+  }, [deskSurface, deskMeta, monitorMeta, monitorBounds]);
 
   // keep refs to the three.js camera and the actual <canvas> element
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -115,7 +159,7 @@ export default function SceneRoot() {
       <DebugHud />
       <Canvas
         style={{ width: "100%", height: "100%" }}
-        camera={{ position: [0, 1.2, 2.5], fov: 50 }}
+        camera={{ position: [0, 1.35, 3.6], fov: 48 }}
         dpr={[1, 1.5]}
         frameloop="always"
         gl={{ powerPreference: "low-power" }}

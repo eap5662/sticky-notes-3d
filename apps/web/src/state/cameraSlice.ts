@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { create } from "zustand";
 import * as THREE from "three";
@@ -23,13 +23,13 @@ export type CameraMode =
 export const CAMERA_CLAMPS = {
   desk: {
     yaw: { min: (-45 * Math.PI) / 180, max: (45 * Math.PI) / 180 },
-    pitch: { min: (-10 * Math.PI) / 180, max: (20 * Math.PI) / 180 },
-    dolly: { min: 1.8, max: 3.4 },
+    pitch: { min: (-12 * Math.PI) / 180, max: (22 * Math.PI) / 180 },
+    dolly: { min: 2.7, max: 4.8 },
   },
   screen: {
-    yaw: { min: (-15 * Math.PI) / 180, max: (15 * Math.PI) / 180 },
-    pitch: { min: (-10 * Math.PI) / 180, max: (10 * Math.PI) / 180 },
-    dolly: { min: 0.5, max: 1.2 }, // ~70–85% screen fill
+    yaw: { min: (-18 * Math.PI) / 180, max: (18 * Math.PI) / 180 },
+    pitch: { min: (-12 * Math.PI) / 180, max: (12 * Math.PI) / 180 },
+    dolly: { min: 1.0, max: 2.2 }, // leave extra room so the whole monitor stays framed
   },
 } as const;
 
@@ -42,7 +42,7 @@ function clamp(x: number, min: number, max: number) {
 
 /**
  * Apply the correct clamp set for a given mode to (yaw, pitch, dolly).
- * Returns a new triple — pure function, no state mutation here.
+ * Returns a new triple - pure function, no state mutation here.
  */
 export function clampPose(
   mode: CameraMode,
@@ -94,20 +94,20 @@ type CameraState = {
 
   /**
    * Reset to a sensible pose for the active mode.
-   * Good for ESC/backdrop or “recenter” UX.
+   * Good for ESC/backdrop or "recenter" UX.
    */
   resetPose: () => void;
 };
 
 /**
  * Reasonable defaults for first render.
- * - Desk pose: slightly pitched down, moderate distance.
+ * - Desk pose: slightly pitched down, wider distance so the full setup is visible.
  */
 const INITIAL_STATE: Omit<CameraState, "setMode" | "setPose" | "orbitBy" | "dollyBy" | "resetPose"> = {
   mode: { kind: "desk" },
   yaw: 0,
-  pitch: (-10 * Math.PI) / 180,
-  dolly: 2.5,
+  pitch: (-8 * Math.PI) / 180,
+  dolly: 3.6,
 };
 
 /**
@@ -116,10 +116,10 @@ const INITIAL_STATE: Omit<CameraState, "setMode" | "setPose" | "orbitBy" | "doll
  */
 export function defaultPoseFor(mode: CameraMode) {
   if (mode.kind === "desk") {
-    return { yaw: THREE.MathUtils.degToRad(25), pitch: THREE.MathUtils.degToRad(8), dolly: 2.6 };
+    return { yaw: THREE.MathUtils.degToRad(22), pitch: THREE.MathUtils.degToRad(6), dolly: 3.8 };
   }
   // screen
-  return { yaw: THREE.MathUtils.degToRad(-12), pitch: THREE.MathUtils.degToRad(-6), dolly: 1.18 };
+  return { yaw: THREE.MathUtils.degToRad(-10), pitch: THREE.MathUtils.degToRad(-4), dolly: 1.7 };
 }
 
 
