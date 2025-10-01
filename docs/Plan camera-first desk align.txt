@@ -1,0 +1,148 @@
+Plan: camera-first desk alignment, then monitor-to-desk
+0) What you already have (we’ll lean on this)
+Surfaces from GLTF nodes via GLTFProp → extractSurfaceFromNode(...) that yields origin, uAxis, vAxis, normal, extents; stored in surfaceMetaStore and overrides in surfaces registry.
+
+
+World bounds per prop (propBoundsStore) updated from each GLTF group.
+
+
+Camera controllers with yaw/pitch/dolly, clamps per mode, and a hard-coded DESK_TARGET (ripe for making dynamic).
+
+
+Click-to-enter ScreenView using planeProject and uvToWorld.
+
+
+Clearance/penetration checks and HUD already scaffolded in useLayoutValidation + DebugHud.
+
+
+Prop-alignment goals doc aligning to desk canonical frame (your docs/plan matches the approach below).
+
+
+
+1) Establish a scene “layout frame” from the desk (single source of truth)
+Create a tiny store (think layoutFrameStore) populated when the desk GLTF registers:
+Take the desk surface meta: center C_d, normal N_d, uDir, vDir. Normalize them.
+
+
+Define canonical desk axes:
+
+
+Up = U_desk = normalize(N_d)
+
+
+Right = R_desk = normalize(uDir)
+
+
+Forward = F_desk = normalize(vDir) (or F_desk = normalize(cross(U_desk, R_desk)) if you prefer a right-hand convention)
+
+
+Keep the desk extents and desk bounds for framing (from propBoundsStore).
+
+
+Persist {U_desk, R_desk, F_desk, C_d, extents, bounds} so anything (camera, monitor placement, props) reads the same frame.
+ This is exactly the “canonical axes” you outlined in docs/prop-alignment-plan.md.
+
+
+Why this matters: every subsequent alignment is now data-driven; changing desks or re-exporting a GLTF doesn’t require code edits.
+
+2) Desk ↔ camera: dynamic, deterministic framing (replace the hard-coded target)
+Right now DeskViewController orbits a fixed DESK_TARGET. Make it computed from the layout frame + bounds:
+Target: use C_d (desk center) or a slightly forward-biased point, e.g. C_d + 0.2 * F_desk - 0.1 * R_desk to bias composition.
+
+
+Pose defaults: compute yaw/pitch/dolly that frame the full desk slab + monitor:
+
+
+Project the desk bounding box into the view plane given a candidate yaw/pitch (e.g., yaw ~ 20°, pitch ~ 6° already feels good) and choose dolly to fit the larger projected dimension at your current FOV margin (simple “fit to view” from bounds).
+
+
+Store the solved {yaw,pitch,dolly} in defaultPoseFor({kind: 'desk'}).
+
+
+Clamps remain as you have them; only the default/target gets smarter.
+
+
+Result: whichever desk model you load, the camera always opens on a well-framed desk without manual tweaking. (You already have all the plumbing: cameraSlice, controllers, and bounds/meta.)
+
+3) Monitor ↔ desk: align face and position from the same frame
+With the desk frame set, place the monitor purely with vectors & bounds (no stand model necessary):
+3a. Vertical placement (no-penetration/float):
+ You already compute a monitorOffset that lifts the monitor so its lowest point along the desk normal clears the desk top by ~1.5 mm. Keep that solver but move it into a reusable “placement pass” that runs after both GLTFs register.
+3b. Facing alignment (rotate about Up):
+Let N_m be the monitor surface normal from surfaceMetaStore.
+
+
+Compute the signed angle around U_desk that rotates N_m → F_desk. Apply that yaw to the monitor group.
+
+
+Tolerance: if angle(N_m, F_desk) ≤ 5°, treat as aligned; otherwise emit a warn and auto-correct. (Add this to useLayoutValidation.)
+
+
+3c. Lateral centering (optional but nice):
+Project the monitor bounds onto R_desk and nudge so it’s centered on desk’s centerline (or a configurable offset).
+
+
+You can clamp the nudge so it never goes past desk extents minus a bezel margin.
+
+
+3d. Fore–aft spacing (depth on the desk):
+Project monitor bounds onto F_desk and nudge to a nominal distance from the desk’s rear edge (or center). Keep a min bezel clearance.
+
+
+All of this is deterministic and reversible — and because you’re using surface meta + prop bounds, it’ll work for any imported monitor model that exposes a “ScreenPlane” node.
+
+4) One “placement pass” to run after GLTFs load
+Add a small orchestrator (e.g., useAutoLayout()) that waits until both desk+monitor surfaces and bounds are present, then:
+Build the layout frame from desk meta (Section 1).
+
+
+Solve camera desk pose once and set default desk pose (Section 2).
+
+
+Solve monitor transform:
+
+
+rotate yaw to face F_desk,
+
+
+compute vertical offset along U_desk for clearance (your current monitorOffset code),
+
+
+compute lateral/fore–aft nudges (Section 3c/3d),
+
+
+commit the monitor’s group transform.
+
+
+Run validation and emit HUD summaries (angle error, clearances) using your useLayoutValidation hook (extend it with angle-to-forward and lateral overflow checks).
+
+
+Because you already expose surfaces and bounds via useSurfaces/usePropBounds, this pass is straightforward and keeps all “magic” in one place.
+
+5) Validation & HUD (make mistakes obvious)
+Extend the existing system so designers see “why” when a GLTF doesn’t sit right:
+Desk origin vs. top mismatch (you already warn): nudge or report.
+
+
+Monitor below desk (you already error).
+
+
+Monitor face misalignment: show axis: 2.8° styled like your earlier mounts HUD; auto-correct under 5°, hard error above, with a “show arrows” overlay (draw N_m and F_desk).
+
+
+Overflow: monitor bounds extend past desk extents on R/F → warn.
+
+
+This keeps your repo “model-friendly”: any new GLTF just needs a correctly named plane node and the system does the rest.
+
+6) Extensible to more props (keyboards, lamps, mugs)
+The same layout frame works for everything:
+Define a small prop placement config: which surface to sit on (desk), desired facing (e.g., align long edge with R_desk), contact normal (U_desk), and clearances.
+
+
+Use bounds → extreme point along a direction helper (you already did for monitor) to place flush with the desk and prevent clipping.
+
+
+
+TL;DR flow
+GLTF nodes → register surfaces & bounds → build desk layout frame → solve camera framing → solve monitor yaw + offsets → validate → HUD. All powered by your current surface extraction, bounds store, camera store, and validation hook — just centralized into one pass.

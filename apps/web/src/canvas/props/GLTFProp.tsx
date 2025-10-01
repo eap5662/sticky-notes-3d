@@ -1,11 +1,12 @@
-﻿import * as React from 'react';
+import * as React from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { extractSurfaceFromNode, type SurfaceExtractOptions } from './surfaceAdapter';
-import { registerSurface, unregisterSurface } from '@/canvas/surfaces';
+import { registerSurface, unregisterSurface, type Surface } from '@/canvas/surfaces';
 import { setSurfaceMeta, clearSurfaceMeta } from '@/state/surfaceMetaStore';
 import { setPropBounds, clearPropBounds, type PropId } from '@/state/propBoundsStore';
-import type { Surface } from '@/canvas/surfaces';
+
+const toVec3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 
 type SurfaceReg = {
   id: Surface['id'];
@@ -15,19 +16,13 @@ type SurfaceReg = {
   onExtract?: (info: ReturnType<typeof extractSurfaceFromNode>['debug']) => void;
 };
 
-const toVec3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
-
 type Props = {
   url: string;
-  /** Optional: map named nodes to Surface ids/kinds (e.g., desk / monitor1) */
   registerSurfaces?: SurfaceReg[];
-  /** Optional transforms on the whole prop */
   position?: [number, number, number];
   rotation?: [number, number, number];
   scale?: number | [number, number, number];
-  /** Callback with the root + a lookup of child nodes by name */
   onLoaded?: (root: THREE.Object3D, nodes: Record<string, THREE.Object3D>) => void;
-  /** Optional: track the prop's world-space bounds in the global store */
   propId?: PropId;
 };
 
@@ -40,23 +35,33 @@ export default function GLTFProp({
   onLoaded,
   propId,
 }: Props) {
-  // Load once; drei caches by URL. The `scene` is a ready-to-insert Object3D tree.
   const { scene } = useGLTF(url);
-
   const groupRef = React.useRef<THREE.Group>(null);
+  const didNotifyLoaded = React.useRef(false);
 
-  // Build a name->node lookup for convenience
   const nodes = React.useMemo(() => {
     const map: Record<string, THREE.Object3D> = {};
     scene.traverse((o) => (map[o.name] = o));
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene.uuid]); // stable across re-renders
+  }, [scene.uuid]);
 
-  // Register requested surfaces (desk/monitor planes) from named nodes
+  const transformKey = React.useMemo(() => {
+    const posKey = position ? position.join(',') : 'p';
+    const rotKey = rotation ? rotation.join(',') : 'r';
+    const scaleKey = Array.isArray(scale)
+      ? scale.join(',')
+      : typeof scale === 'number'
+      ? `s:${scale}`
+      : 's';
+    return `${posKey}|${rotKey}|${scaleKey}`;
+  }, [position, rotation, scale]);
+
   React.useEffect(() => {
     if (!scene) return;
-    // Ensure world matrices are up-to-date before sampling
+
+    const group = groupRef.current;
+    group?.updateWorldMatrix(true, true);
     scene.updateWorldMatrix(true, true);
 
     const regs = registerSurfaces
@@ -85,7 +90,10 @@ export default function GLTFProp({
       })
       .filter(Boolean) as Surface['id'][];
 
-    onLoaded?.(scene, nodes);
+    if (!didNotifyLoaded.current) {
+      onLoaded?.(scene, nodes);
+      didNotifyLoaded.current = true;
+    }
 
     return () => {
       regs.forEach((id) => {
@@ -93,9 +101,8 @@ export default function GLTFProp({
         clearSurfaceMeta(id);
       });
     };
-  }, [scene, nodes, registerSurfaces, url, onLoaded]);
+  }, [scene, nodes, registerSurfaces, url, onLoaded, transformKey]);
 
-  // Track world-space bounds for downstream layout heuristics (desk clearance, etc.)
   React.useEffect(() => {
     if (!propId) return;
     const group = groupRef.current;
@@ -117,12 +124,9 @@ export default function GLTFProp({
 
   return (
     <group ref={groupRef} position={position} rotation={rotation} scale={scale}>
-      {/* Render the GLTF content */}
       <primitive object={scene} />
     </group>
   );
 }
 
-// drei needs this for TS; optional preloading utility
 export const preloadGLTF: (url: string) => void = useGLTF.preload;
-

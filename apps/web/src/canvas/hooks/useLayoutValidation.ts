@@ -1,9 +1,10 @@
-﻿import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { SurfaceId } from '@/canvas/surfaces';
 import { useSurface, useSurfaceMeta } from './useSurfaces';
 import { usePropBounds } from './usePropBounds';
 import type { PropBounds } from '@/state/propBoundsStore';
+import { useLayoutFrame } from './useLayoutFrame';
 
 export type LayoutWarning = {
   id: string;
@@ -14,13 +15,11 @@ export type LayoutWarning = {
 };
 
 export type UseLayoutValidationOptions = {
-  /** Minimum clearance (meters) expected between desk top and monitor base along the desk normal. */
   monitorClearance?: number;
-  /** Tolerance (meters) when comparing derived GLTF planes to registered surfaces. */
   tolerance?: number;
-  /** Optional reporter callback for UI/console plumbing. */
+  monitorFaceToleranceDeg?: number;
+  edgeMargin?: number;
   onReport?: (warnings: LayoutWarning[]) => void;
-  /** Toggle validations without unmounting the hook. */
   enabled?: boolean;
 };
 
@@ -42,14 +41,58 @@ function extremalPoint(bounds: PropBounds, normal: THREE.Vector3, pick: 'min' | 
   );
 }
 
+function spanAlongAxis(bounds: PropBounds, axis: THREE.Vector3) {
+  const corners: THREE.Vector3[] = [];
+  for (let x = 0; x <= 1; x++) {
+    for (let y = 0; y <= 1; y++) {
+      for (let z = 0; z <= 1; z++) {
+        corners.push(
+          new THREE.Vector3(
+            x ? bounds.max[0] : bounds.min[0],
+            y ? bounds.max[1] : bounds.min[1],
+            z ? bounds.max[2] : bounds.min[2]
+          )
+        );
+      }
+    }
+  }
+  let min = Infinity;
+  let max = -Infinity;
+  for (const corner of corners) {
+    const dot = corner.dot(axis);
+    min = Math.min(min, dot);
+    max = Math.max(max, dot);
+  }
+  return { min, max };
+}
+
+function projectOntoPlane(vec: THREE.Vector3, normal: THREE.Vector3) {
+  const n = normal.clone().normalize();
+  return vec.clone().sub(n.multiplyScalar(vec.dot(n)));
+}
+
+function signedAngleAroundAxis(from: THREE.Vector3, to: THREE.Vector3, axis: THREE.Vector3) {
+  const cross = new THREE.Vector3().crossVectors(from, to);
+  const dot = THREE.MathUtils.clamp(from.dot(to), -1, 1);
+  return Math.atan2(cross.dot(axis), dot);
+}
+
 export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
-  const { monitorClearance = 0, tolerance = 0.002, onReport, enabled = true } = options;
+  const {
+    monitorClearance = 0,
+    tolerance = 0.002,
+    monitorFaceToleranceDeg = 5,
+    edgeMargin = 0.0,
+    onReport,
+    enabled = true,
+  } = options;
 
   const deskSurface = useSurface('desk');
   const monitorSurface = useSurface('monitor1');
   const deskMeta = useSurfaceMeta('desk');
   const monitorMeta = useSurfaceMeta('monitor1');
   const monitorBounds = usePropBounds('monitor1');
+  const layoutFrame = useLayoutFrame();
 
   const warnings = useMemo<LayoutWarning[]>(() => {
     if (!enabled) return [];
@@ -101,8 +144,82 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
       }
     }
 
+    if (layoutFrame && monitorMeta) {
+      const up = toVec3(layoutFrame.up).normalize();
+      const forward = toVec3(layoutFrame.forward).normalize();
+      const monitorNormal = toVec3(monitorMeta.normal).normalize();
+
+      const projectedMonitor = projectOntoPlane(monitorNormal, up);
+      const projectedForward = projectOntoPlane(forward, up);
+      if (projectedMonitor.lengthSq() > 1e-6 && projectedForward.lengthSq() > 1e-6) {
+        projectedMonitor.normalize();
+        projectedForward.normalize();
+        const angleRad = Math.abs(signedAngleAroundAxis(projectedMonitor, projectedForward, up));
+        const angleDeg = THREE.MathUtils.radToDeg(angleRad);
+        if (angleDeg > monitorFaceToleranceDeg) {
+          next.push({
+            id: 'monitor-face-misalignment',
+            severity: 'error',
+            surfaceId: 'monitor1',
+            message: `Monitor facing deviates ${angleDeg.toFixed(2)} deg from desk forward (${monitorFaceToleranceDeg} deg max).`,
+            value: angleDeg,
+          });
+        }
+      }
+    }
+
+    if (layoutFrame && monitorBounds) {
+      const right = toVec3(layoutFrame.right).normalize();
+      const forward = toVec3(layoutFrame.forward).normalize();
+      const deskBounds = layoutFrame.bounds;
+
+      const deskSpanRight = spanAlongAxis(deskBounds, right);
+      const monitorSpanRight = spanAlongAxis(monitorBounds, right);
+      if (monitorSpanRight.min < deskSpanRight.min - edgeMargin || monitorSpanRight.max > deskSpanRight.max + edgeMargin) {
+        const overflow = Math.max(
+          deskSpanRight.min - monitorSpanRight.min,
+          monitorSpanRight.max - deskSpanRight.max,
+        );
+        next.push({
+          id: 'monitor-lateral-overflow',
+          severity: 'warn',
+          surfaceId: 'monitor1',
+          message: `Monitor extends  mm past desk lateral bounds (margin  mm).`,
+          value: Math.abs(overflow),
+        });
+      }
+
+      const deskSpanForward = spanAlongAxis(deskBounds, forward);
+      const monitorSpanForward = spanAlongAxis(monitorBounds, forward);
+      if (monitorSpanForward.min < deskSpanForward.min - edgeMargin || monitorSpanForward.max > deskSpanForward.max + edgeMargin) {
+        const overflow = Math.max(
+          deskSpanForward.min - monitorSpanForward.min,
+          monitorSpanForward.max - deskSpanForward.max,
+        );
+        next.push({
+          id: 'monitor-depth-overflow',
+          severity: 'warn',
+          surfaceId: 'monitor1',
+          message: `Monitor extends  mm past desk depth bounds (margin  mm).`,
+          value: Math.abs(overflow),
+        });
+      }
+    }
+
     return next;
-  }, [deskSurface, monitorSurface, deskMeta, monitorMeta, monitorBounds, tolerance, monitorClearance, enabled]);
+  }, [
+    enabled,
+    layoutFrame,
+    deskSurface,
+    deskMeta,
+    monitorSurface,
+    monitorMeta,
+    monitorBounds,
+    monitorClearance,
+    tolerance,
+    monitorFaceToleranceDeg,
+    edgeMargin,
+  ]);
 
   const lastReportRef = useRef<string>('');
   useEffect(() => {
@@ -115,3 +232,6 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
 
   return warnings;
 }
+
+
+

@@ -7,9 +7,15 @@
  */
 import { useCamera } from '@/state/cameraSlice';
 import { useSurface, useSurfaceMeta } from '@/canvas/hooks/useSurfaces';
+import { useLayoutFrameState } from '@/canvas/hooks/useLayoutFrame';
 
 function radToDeg(r: number) {
   return (r * 180) / Math.PI;
+}
+
+function formatVec3(vec: [number, number, number] | null) {
+  if (!vec) return 'n/a';
+  return `${vec[0].toFixed(2)}, ${vec[1].toFixed(2)}, ${vec[2].toFixed(2)}`;
 }
 
 export default function DebugHud() {
@@ -23,6 +29,8 @@ export default function DebugHud() {
 
   const deskSurface = useSurface('desk');
   const monitorSurface = useSurface('monitor1');
+
+  const layout = useLayoutFrameState();
 
   const formatSize = (extents?: { u: number; v: number }) =>
     extents ? `${extents.u.toFixed(3)} x ${extents.v.toFixed(3)}` : 'n/a';
@@ -49,6 +57,19 @@ export default function DebugHud() {
       </div>
       <div>
         dolly: <span className="font-semibold">{dolly.toFixed(2)}</span>
+      </div>
+
+      <div className="mt-2 border-t border-white/20 pt-2">
+        <div className="opacity-75">Layout Frame</div>
+        <div>
+          status: <span className="font-semibold">{layout.status}</span>
+        </div>
+        <div>
+          target: <span className="font-semibold">{formatVec3(layout.cameraTarget)}</span>
+        </div>
+        <div>
+          monitor pos: <span className="font-semibold">{formatVec3(layout.monitorPlacement?.position ?? null)}</span>
+        </div>
       </div>
 
       <div className="mt-2 border-t border-white/20 pt-2">

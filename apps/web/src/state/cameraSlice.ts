@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { create } from "zustand";
 import * as THREE from "three";
@@ -12,13 +12,15 @@ export type CameraMode =
   | { kind: "desk" }
   | { kind: "screen"; surfaceId: "monitor1" };
 
+export type CameraPose = {
+  yaw: number;
+  pitch: number;
+  dolly: number;
+};
+
 /**
  * One place to tune clamped ranges for each mode.
  * All angles are in radians; dolly is a distance in world units (meters).
- *
- * Notes:
- * - Keep desk yaw wide so both planes remain visible.
- * - Keep screen yaw/pitch narrow so the monitor mostly fills the frame.
  */
 export const CAMERA_CLAMPS = {
   desk: {
@@ -29,15 +31,21 @@ export const CAMERA_CLAMPS = {
   screen: {
     yaw: { min: (-18 * Math.PI) / 180, max: (18 * Math.PI) / 180 },
     pitch: { min: (-12 * Math.PI) / 180, max: (12 * Math.PI) / 180 },
-    dolly: { min: 1.0, max: 2.2 }, // leave extra room so the whole monitor stays framed
+    dolly: { min: 1.0, max: 2.2 },
   },
 } as const;
 
-/**
- * Clamp a scalar into [min, max].
- */
 function clamp(x: number, min: number, max: number) {
   return Math.max(min, Math.min(max, x));
+}
+
+function clampPoseForKind(kind: "desk" | "screen", pose: CameraPose): CameraPose {
+  const clamps = CAMERA_CLAMPS[kind];
+  return {
+    yaw: clamp(pose.yaw, clamps.yaw.min, clamps.yaw.max),
+    pitch: clamp(pose.pitch, clamps.pitch.min, clamps.pitch.max),
+    dolly: clamp(pose.dolly, clamps.dolly.min, clamps.dolly.max),
+  };
 }
 
 /**
@@ -49,84 +57,56 @@ export function clampPose(
   yaw: number,
   pitch: number,
   dolly: number
-) {
+): CameraPose {
   const key = mode.kind === "desk" ? "desk" : "screen";
-  const c = CAMERA_CLAMPS[key];
-  return {
-    yaw: clamp(yaw, c.yaw.min, c.yaw.max),
-    pitch: clamp(pitch, c.pitch.min, c.pitch.max),
-    dolly: clamp(dolly, c.dolly.min, c.dolly.max),
-  };
+  return clampPoseForKind(key, { yaw, pitch, dolly });
 }
 
 type CameraState = {
-  // Current mode (which also selects which clamp set we use)
   mode: CameraMode;
-
-  // Spherical-ish camera parameters around an implicit target
-  // (controllers decide exact target point).
-  yaw: number;   // left/right
-  pitch: number; // up/down
-  dolly: number; // distance from target
-
-  /**
-   * Switch camera mode. Also clamps pose to the new mode's ranges
-   * (so a wide desk yaw can't carry into narrow screen yaw).
-   */
+  yaw: number;
+  pitch: number;
+  dolly: number;
+  defaults: {
+    desk: CameraPose;
+    screen: CameraPose;
+  };
   setMode: (mode: CameraMode) => void;
-
-  /**
-   * Patch any of yaw/pitch/dolly, auto-clamping to current mode.
-   */
   setPose: (p: Partial<Pick<CameraState, "yaw" | "pitch" | "dolly">>) => void;
-
-  /**
-   * Incrementally orbit by deltas, then clamp.
-   * Useful for mouse/touch drag handlers.
-   */
   orbitBy: (dYaw: number, dPitch: number) => void;
-
-  /**
-   * Incrementally dolly by a delta, then clamp.
-   * Useful for wheel/pinch handlers.
-   */
   dollyBy: (d: number) => void;
-
-  /**
-   * Reset to a sensible pose for the active mode.
-   * Good for ESC/backdrop or "recenter" UX.
-   */
   resetPose: () => void;
+  setDefaultPose: (kind: CameraMode["kind"], pose: CameraPose) => void;
 };
 
-/**
- * Reasonable defaults for first render.
- * - Desk pose: slightly pitched down, wider distance so the full setup is visible.
- */
-const INITIAL_STATE: Omit<CameraState, "setMode" | "setPose" | "orbitBy" | "dollyBy" | "resetPose"> = {
+const STATIC_DEFAULTS: { desk: CameraPose; screen: CameraPose } = {
+  desk: {
+    yaw: THREE.MathUtils.degToRad(22),
+    pitch: THREE.MathUtils.degToRad(6),
+    dolly: 3.8,
+  },
+  screen: {
+    yaw: THREE.MathUtils.degToRad(-10),
+    pitch: THREE.MathUtils.degToRad(-4),
+    dolly: 1.7,
+  },
+};
+
+const INITIAL_STATE: Pick<CameraState, "mode" | "yaw" | "pitch" | "dolly" | "defaults"> = {
   mode: { kind: "desk" },
-  yaw: 0,
-  pitch: (-8 * Math.PI) / 180,
-  dolly: 3.6,
+  yaw: STATIC_DEFAULTS.desk.yaw,
+  pitch: STATIC_DEFAULTS.desk.pitch,
+  dolly: STATIC_DEFAULTS.desk.dolly,
+  defaults: {
+    desk: { ...STATIC_DEFAULTS.desk },
+    screen: { ...STATIC_DEFAULTS.screen },
+  },
 };
 
-/**
- * Provide a sane, mode-specific default pose.
- * You can tune these without touching controller code.
- */
-export function defaultPoseFor(mode: CameraMode) {
-  if (mode.kind === "desk") {
-    return { yaw: THREE.MathUtils.degToRad(22), pitch: THREE.MathUtils.degToRad(6), dolly: 3.8 };
-  }
-  // screen
-  return { yaw: THREE.MathUtils.degToRad(-10), pitch: THREE.MathUtils.degToRad(-4), dolly: 1.7 };
+function clonePose(pose: CameraPose): CameraPose {
+  return { yaw: pose.yaw, pitch: pose.pitch, dolly: pose.dolly };
 }
 
-
-/**
- * Zustand store: central camera state + small set of ergonomic actions.
- * Controllers subscribe to this and translate it into actual camera transforms.
- */
 export const useCamera = create<CameraState>((set, get) => ({
   ...INITIAL_STATE,
 
@@ -157,7 +137,18 @@ export const useCamera = create<CameraState>((set, get) => ({
   },
 
   resetPose: () => {
-    const { mode } = get();
-    set(defaultPoseFor(mode));
+    const { mode, defaults } = get();
+    const pose = mode.kind === "desk" ? defaults.desk : defaults.screen;
+    set({ yaw: pose.yaw, pitch: pose.pitch, dolly: pose.dolly });
+  },
+
+  setDefaultPose: (kind, pose) => {
+    const clamped = clampPoseForKind(kind === "desk" ? "desk" : "screen", pose);
+    set((state) => ({
+      defaults: {
+        ...state.defaults,
+        [kind === "desk" ? "desk" : "screen"]: clonePose(clamped),
+      },
+    }));
   },
 }));
