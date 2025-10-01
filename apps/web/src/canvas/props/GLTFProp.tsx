@@ -2,11 +2,20 @@
 import * as React from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
-import { surfaceFromNode } from './surfaceAdapter';
+import { extractSurfaceFromNode, type SurfaceExtractOptions } from './surfaceAdapter';
 import { registerSurface, unregisterSurface } from '@/canvas/surfaces';
+import { setSurfaceMeta, clearSurfaceMeta } from '@/state/surfaceMetaStore';
 import type { Surface } from '@/canvas/surfaces';
 
-type SurfaceReg = { id: Surface['id']; kind: Surface['kind']; nodeName: string };
+type SurfaceReg = {
+  id: Surface['id'];
+  kind: Surface['kind'];
+  nodeName: string;
+  options?: SurfaceExtractOptions;
+  onExtract?: (info: ReturnType<typeof extractSurfaceFromNode>['debug']) => void;
+};
+
+const toVec3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 
 type Props = {
   url: string;
@@ -39,14 +48,27 @@ export default function GLTFProp({ url, registerSurfaces = [], position, rotatio
     scene.updateWorldMatrix(true, true);
 
     const regs = registerSurfaces
-      .map(({ id, kind, nodeName }) => {
+      .map(({ id, kind, nodeName, options, onExtract }) => {
         const node = nodes[nodeName];
         if (!node) {
           console.warn(`[GLTFProp] node "${nodeName}" not found in ${url} for surface ${id}`);
           return null;
         }
-        const s = surfaceFromNode(node, id, kind);
-        registerSurface(s);
+        try {
+          const { surface, debug } = extractSurfaceFromNode(node, id, kind, options);
+          registerSurface(surface);
+          setSurfaceMeta(id, {
+            center: toVec3(debug.center),
+            normal: toVec3(debug.normal),
+            uDir: toVec3(debug.uDir),
+            vDir: toVec3(debug.vDir),
+            extents: debug.extents,
+          });
+          onExtract?.(debug);
+        } catch (err) {
+          console.error(`[GLTFProp] failed to derive surface ${id} from node "${nodeName}"`, err);
+          return null;
+        }
         return id;
       })
       .filter(Boolean) as Surface['id'][];
@@ -54,7 +76,10 @@ export default function GLTFProp({ url, registerSurfaces = [], position, rotatio
     onLoaded?.(scene, nodes);
 
     return () => {
-      regs.forEach((id) => unregisterSurface(id));
+      regs.forEach((id) => {
+        unregisterSurface(id);
+        clearSurfaceMeta(id);
+      });
     };
   }, [scene, nodes, registerSurfaces, url, onLoaded]);
 

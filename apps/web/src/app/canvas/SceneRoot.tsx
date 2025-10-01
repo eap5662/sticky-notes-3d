@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -7,22 +7,26 @@ import { useCamera } from "@/state/cameraSlice";
 import DeskViewController from "@/canvas/Cameras/DeskViewController";
 import ScreenViewController from "@/canvas/Cameras/ScreenViewController";
 import { Surfaces } from "@/canvas/surfaceRendering";
-import { subscribe as subscribeSurfaces, getSurfaceOrNull, type SurfaceId } from "@/canvas/surfaces";
+import type { SurfaceMeta } from "@/state/surfaceMetaStore";
 import { planeProject } from "@/canvas/math/plane";
 import DebugHud from "@/canvas/debugHud";
-import type { TableStandConfig } from "@/canvas/mounts/types";
-import { computePose } from "@/canvas/mounts/pose";
-import { TableStandMount } from "@/canvas/mounts/variants/tableStand";
+import { useSurface, useSurfaceMeta } from "@/canvas/hooks/useSurfaces";
+import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayoutValidation";
 import { DeskProp } from "@/canvas/props/DeskProp";
 import { MonitorProp } from "@/canvas/props/MonitorProp";
 
-function useSurface(id: SurfaceId) {
-  return useSyncExternalStore(
-    subscribeSurfaces,
-    () => getSurfaceOrNull(id),
-    () => getSurfaceOrNull(id)
-  );
+const tupleToVec3 = (values: readonly number[]) => new THREE.Vector3(values[0], values[1], values[2]);
+
+function cloneSurfaceMeta(meta: SurfaceMeta): SurfaceMeta {
+  return {
+    center: [...meta.center] as SurfaceMeta['center'],
+    normal: [...meta.normal] as SurfaceMeta['normal'],
+    uDir: [...meta.uDir] as SurfaceMeta['uDir'],
+    vDir: [...meta.vDir] as SurfaceMeta['vDir'],
+    extents: { ...meta.extents },
+  };
 }
+
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -30,8 +34,42 @@ export default function SceneRoot() {
 
   const deskSurface = useSurface("desk");
   const monitorSurface = useSurface("monitor1");
+  const deskMeta = useSurfaceMeta("desk");
+  const monitorMeta = useSurfaceMeta("monitor1");
 
   const surfaceReady = deskSurface && monitorSurface;
+
+  const initialMonitorMetaRef = useRef<SurfaceMeta | null>(null);
+  useEffect(() => {
+    if (!initialMonitorMetaRef.current && monitorMeta) {
+      initialMonitorMetaRef.current = cloneSurfaceMeta(monitorMeta);
+    }
+  }, [monitorMeta]);
+
+  const handleLayoutWarnings = useCallback((warnings: LayoutWarning[]) => {
+    warnings.forEach((warning) => {
+      const log = warning.severity === 'error' ? console.error : console.warn;
+      log(`[layout] ${warning.id}: ${warning.message}`);
+    });
+  }, []);
+  useLayoutValidation({ monitorClearance: 0.0015, tolerance: 0.003, onReport: handleLayoutWarnings });
+
+  const monitorOffset = useMemo(() => {
+    if (!deskSurface || !deskMeta) return undefined;
+    const baseMeta = initialMonitorMetaRef.current ?? monitorMeta;
+    if (!baseMeta) return undefined;
+
+    const deskNormal = tupleToVec3(deskMeta.normal).normalize();
+    const deskTop = tupleToVec3(deskSurface.origin);
+    const clearance = 0.0015; // 1.5 mm lift to avoid z-fighting
+    const desiredBottom = deskTop.clone().add(deskNormal.clone().multiplyScalar(clearance));
+
+    const baseCenter = tupleToVec3(baseMeta.center);
+    const baseNormal = tupleToVec3(baseMeta.normal).normalize();
+    const baseBottom = baseCenter.clone().sub(baseNormal.clone().multiplyScalar(baseMeta.extents.thickness / 2));
+
+    return desiredBottom.sub(baseBottom).toArray() as [number, number, number];
+  }, [deskSurface, deskMeta, monitorMeta]);
 
   // keep refs to the three.js camera and the actual <canvas> element
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -72,27 +110,11 @@ export default function SceneRoot() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setMode]);
 
-  // ---- TableStand mount config + pose ----
-  const mountCfg: TableStandConfig = useMemo(
-    () => ({
-      deskAnchor: { surfaceId: "desk", u: 0.52, v: 0.42, lift: 0 },
-      base: { w: 0.22, d: 0.24, t: 0.02, fillet: 0.01, minClearance: 2 }, // mm
-      neck: { width: 0.035, depth: 0.025 },
-      plate: { w: 0.12, h: 0.10, t: 0.004 },
-    }),
-    []
-  );
-
-  const pose = useMemo(() => {
-    if (!deskSurface || !monitorSurface) return null;
-    const socket = { u: 0, v: 0, lift: 0 };
-    return computePose({ deskSurface, monitorSurface, socket, deskAnchor: mountCfg.deskAnchor });
-  }, [deskSurface, monitorSurface, mountCfg]);
-
   return (
-    <div className="relative">
+    <div className="relative h-[70vh] min-h-[540px]">
       <DebugHud />
       <Canvas
+        style={{ width: "100%", height: "100%" }}
         camera={{ position: [0, 1.2, 2.5], fov: 50 }}
         dpr={[1, 1.5]}
         frameloop="always"
@@ -116,10 +138,9 @@ export default function SceneRoot() {
         <Suspense fallback={null}>
           {/* GLTF props that also register surfaces */}
           <DeskProp url="/models/DeskTopPlane.glb" />
-          <MonitorProp url="/models/monitor_processed.glb" />
+          <MonitorProp url="/models/monitor_processed.glb" position={monitorOffset} />
 
           <Surfaces />
-          {pose && <TableStandMount pose={pose} config={mountCfg} showDebug />}
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
         </Suspense>
       </Canvas>

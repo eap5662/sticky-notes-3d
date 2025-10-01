@@ -5,7 +5,7 @@ export function DeskProp({ url }: { url: string }) {
   return (
     <GLTFProp
       url={url}
-      registerSurfaces={[{ id: 'desk', kind: 'desk', nodeName: 'DeskTopPlane' }]}
+      registerSurfaces={[{ id: 'desk', kind: 'desk', nodeName: 'DeskTopPlane', options: { normalSide: 'positive' } }]}
     />
   );
 }
