@@ -86,6 +86,14 @@ function scaleBoundsFromFoot(bounds: PropBounds, scale: readonly number[]): Prop
   };
 }
 
+function boundsBottomCenter(bounds: PropBounds): THREE.Vector3 {
+  return new THREE.Vector3(
+    (bounds.min[0] + bounds.max[0]) / 2,
+    bounds.min[1],
+    (bounds.min[2] + bounds.max[2]) / 2,
+  );
+}
+
 function collectCorners(box: THREE.Box3) {
   const corners: THREE.Vector3[] = [];
   for (let x = 0; x <= 1; x++) {
@@ -381,6 +389,7 @@ export function useAutoLayout() {
 
   const monitorMeta = useSurfaceMeta("monitor1");
   const monitorBounds = usePropBounds("monitor1");
+  const initialMonitorFootRef = useRef<THREE.Vector3 | null>(null);
   const monitorScale = usePropScale("monitor1");
   const [monitorScaleX, monitorScaleY, monitorScaleZ] = monitorScale;
 
@@ -396,6 +405,9 @@ export function useAutoLayout() {
   useEffect(() => {
     if (!initialMonitorBoundsRef.current && monitorBounds) {
       initialMonitorBoundsRef.current = cloneBounds(monitorBounds);
+      if (!initialMonitorFootRef.current) {
+        initialMonitorFootRef.current = boundsBottomCenter(monitorBounds);
+      }
     }
   }, [monitorBounds]);
 
@@ -414,11 +426,19 @@ export function useAutoLayout() {
     const frame = buildLayoutFrame(deskMeta, deskBounds);
     const cameraSolution = solveCamera(frame, deskBounds, monitorBounds ?? null);
 
+    const frameRight = toVec3(frame.right);
+    const frameForward = toVec3(frame.forward);
     const monitorScaleVec: [number, number, number] = [monitorScaleX, monitorScaleY, monitorScaleZ];
     const baseMonitorBounds = initialMonitorBoundsRef.current;
     const scaledMonitorBounds = baseMonitorBounds && hasNonUnitScale(monitorScaleVec)
       ? scaleBoundsFromFoot(baseMonitorBounds, monitorScaleVec)
       : baseMonitorBounds;
+
+    const baseFoot = initialMonitorFootRef.current ?? (baseMonitorBounds ? boundsBottomCenter(baseMonitorBounds) : null);
+    const scaledFoot = scaledMonitorBounds ? boundsBottomCenter(scaledMonitorBounds) : baseFoot;
+    const footDelta = baseFoot && scaledFoot ? scaledFoot.clone().sub(baseFoot) : new THREE.Vector3(0, 0, 0);
+    const footLateralOffset = footDelta.dot(frameRight);
+    const footDepthOffset = footDelta.dot(frameForward);
 
     const placementCandidate = solveMonitor(
       frame,
@@ -427,7 +447,10 @@ export function useAutoLayout() {
       monitorBounds ?? null,
       initialMonitorMetaRef.current,
       baseMonitorBounds,
-      { lateral: overrides.monitorLateral, depth: overrides.monitorDepth },
+      {
+        lateral: overrides.monitorLateral - footLateralOffset,
+        depth: overrides.monitorDepth - footDepthOffset,
+      },
       scaledMonitorBounds,
     );
 
