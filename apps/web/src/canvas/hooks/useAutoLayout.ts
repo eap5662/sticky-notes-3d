@@ -280,16 +280,18 @@ function solveCamera(
   };
 }
 
-function solveMonitor(
+function solveDockPlacement(
   frame: LayoutFrame,
   deskSurface: Surface | null,
-  monitorMeta: SurfaceMeta | null,
-  currentBounds: PropBounds | null,
-  baseMeta: SurfaceMeta | null,
-  baseBounds: PropBounds | null,
-  manualOffsets?: { lateral: number; depth: number },
-  scaledBounds: PropBounds | null = null,
-): MonitorPlacement | null {
+  propBounds: PropBounds | null,
+  propMeta: SurfaceMeta | null,
+  dockOffset: { lateral: number; depth: number; lift?: number; yaw?: number },
+  options: {
+    clearance: number;
+    edgeMargin: number;
+    faceForward: boolean;
+  }
+): { position: [number, number, number]; rotation: [number, number, number] } | null {
   const up = toVec3(frame.up);
   const right = toVec3(frame.right);
   const forward = toVec3(frame.forward);
@@ -297,48 +299,44 @@ function solveMonitor(
   const deskTop = deskSurface
     ? new THREE.Vector3(deskSurface.origin[0], deskSurface.origin[1], deskSurface.origin[2])
     : new THREE.Vector3(frame.center[0], frame.center[1], frame.center[2]);
-  const desiredPlane = deskTop.dot(up) + MONITOR_CLEARANCE;
+  const desiredPlane = deskTop.dot(up) + options.clearance;
 
-  const referenceBounds = scaledBounds ?? baseBounds ?? currentBounds;
-  if (!referenceBounds && !baseMeta) {
+  if (!propBounds && !propMeta) {
     return null;
   }
 
-  let liftDelta = 0;
-  if (referenceBounds) {
-    const bottom = extremalPoint(referenceBounds, up, "min");
+  let liftDelta = dockOffset.lift ?? 0;
+  if (propBounds) {
+    const bottom = extremalPoint(propBounds, up, "min");
     liftDelta = desiredPlane - bottom.dot(up);
-  } else if (baseMeta) {
-    const center = new THREE.Vector3(baseMeta.center[0], baseMeta.center[1], baseMeta.center[2]);
-    const baseNormal = toVec3(baseMeta.normal).normalize();
-    const bottom = center.clone().sub(baseNormal.multiplyScalar(baseMeta.extents.thickness / 2));
+  } else if (propMeta) {
+    const center = new THREE.Vector3(propMeta.center[0], propMeta.center[1], propMeta.center[2]);
+    const baseNormal = toVec3(propMeta.normal).normalize();
+    const bottom = center.clone().sub(baseNormal.multiplyScalar(propMeta.extents.thickness / 2));
     liftDelta = desiredPlane - bottom.dot(up);
   }
 
-  const manualLateral = manualOffsets?.lateral ?? 0;
-  const manualDepth = manualOffsets?.depth ?? 0;
-
   const deskCenter = boundsCenter(frame.bounds);
-  const boundsForAlignment = scaledBounds ?? referenceBounds ?? baseBounds ?? currentBounds;
-  let lateralDelta = manualLateral;
-  let depthDelta = manualDepth;
-  if (boundsForAlignment) {
-    const monitorCenter = boundsCenter(boundsForAlignment);
-    lateralDelta += deskCenter.clone().sub(monitorCenter).dot(right);
-    depthDelta += deskCenter.clone().sub(monitorCenter).dot(forward);
+  let lateralDelta = dockOffset.lateral;
+  let depthDelta = dockOffset.depth;
+
+  if (propBounds) {
+    const propCenter = boundsCenter(propBounds);
+    lateralDelta += deskCenter.clone().sub(propCenter).dot(right);
+    depthDelta += deskCenter.clone().sub(propCenter).dot(forward);
 
     const deskSpanRight = spanAlongAxis(frame.bounds, right);
-    const monitorSpanRight = spanAlongAxis(boundsForAlignment, right);
+    const propSpanRight = spanAlongAxis(propBounds, right);
     const halfDeskRight = (deskSpanRight.max - deskSpanRight.min) / 2;
-    const halfMonitorRight = (monitorSpanRight.max - monitorSpanRight.min) / 2;
-    const limitRight = Math.max(0, halfDeskRight - halfMonitorRight - EDGE_MARGIN);
+    const halfPropRight = (propSpanRight.max - propSpanRight.min) / 2;
+    const limitRight = Math.max(0, halfDeskRight - halfPropRight - options.edgeMargin);
     lateralDelta = clampScalar(lateralDelta, -limitRight, limitRight);
 
     const deskSpanForward = spanAlongAxis(frame.bounds, forward);
-    const monitorSpanForward = spanAlongAxis(boundsForAlignment, forward);
+    const propSpanForward = spanAlongAxis(propBounds, forward);
     const halfDeskForward = (deskSpanForward.max - deskSpanForward.min) / 2;
-    const halfMonitorForward = (monitorSpanForward.max - monitorSpanForward.min) / 2;
-    const limitForward = Math.max(0, halfDeskForward - halfMonitorForward - EDGE_MARGIN);
+    const halfPropForward = (propSpanForward.max - propSpanForward.min) / 2;
+    const limitForward = Math.max(0, halfDeskForward - halfPropForward - options.edgeMargin);
     depthDelta = clampScalar(depthDelta, -limitForward, limitForward);
   }
 
@@ -352,16 +350,15 @@ function solveMonitor(
 
   const position = lift.add(lateral).add(depth);
 
-  const normalSource = baseMeta ?? monitorMeta;
-  let yaw = 0;
-  if (normalSource) {
-    const monitorNormal = toVec3(normalSource.normal).normalize();
-    const projectedMonitor = projectOntoPlane(monitorNormal, up);
+  let yaw = dockOffset.yaw ?? 0;
+  if (options.faceForward && propMeta) {
+    const propNormal = toVec3(propMeta.normal).normalize();
+    const projectedProp = projectOntoPlane(propNormal, up);
     const projectedForward = projectOntoPlane(forward, up);
-    if (projectedMonitor.lengthSq() > SNAP_EPS && projectedForward.lengthSq() > SNAP_EPS) {
-      projectedMonitor.normalize();
+    if (projectedProp.lengthSq() > SNAP_EPS && projectedForward.lengthSq() > SNAP_EPS) {
+      projectedProp.normalize();
       projectedForward.normalize();
-      yaw = signedAngleAroundAxis(projectedMonitor, projectedForward, up);
+      yaw = signedAngleAroundAxis(projectedProp, projectedForward, up);
     }
   }
 
@@ -371,6 +368,36 @@ function solveMonitor(
     position: toTuple(position),
     rotation: [0, yaw, 0],
   };
+}
+
+function solveMonitor(
+  frame: LayoutFrame,
+  deskSurface: Surface | null,
+  monitorMeta: SurfaceMeta | null,
+  currentBounds: PropBounds | null,
+  baseMeta: SurfaceMeta | null,
+  baseBounds: PropBounds | null,
+  manualOffsets?: { lateral: number; depth: number },
+  scaledBounds: PropBounds | null = null,
+): MonitorPlacement | null {
+  const referenceBounds = scaledBounds ?? baseBounds ?? currentBounds;
+  const normalSource = baseMeta ?? monitorMeta;
+
+  return solveDockPlacement(
+    frame,
+    deskSurface,
+    referenceBounds,
+    normalSource,
+    {
+      lateral: manualOffsets?.lateral ?? 0,
+      depth: manualOffsets?.depth ?? 0,
+    },
+    {
+      clearance: MONITOR_CLEARANCE,
+      edgeMargin: EDGE_MARGIN,
+      faceForward: true,
+    }
+  );
 }
 
 function posesApproximatelyEqual(a: LayoutPose, b: LayoutPose, eps = 1e-3) {
