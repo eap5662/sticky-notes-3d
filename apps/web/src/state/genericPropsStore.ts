@@ -183,6 +183,34 @@ export function setGenericPropRotation(id: GenericPropId, rotation: Vec3) {
   });
 }
 
+function wrapRadians(value: number) {
+  const wrapped = ((value + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+  return Math.abs(wrapped) < 1e-6 ? 0 : Number(wrapped.toFixed(6));
+}
+
+function radToDeg(rad: number) {
+  return (rad * 180) / Math.PI;
+}
+
+function degToRad(deg: number) {
+  return (deg * Math.PI) / 180;
+}
+
+export function rotateGenericProp(id: GenericPropId, deltaYDeg: number) {
+  updateProp(id, (prop) => {
+    const currentYRad = prop.rotation[1];
+    const deltaYRad = degToRad(deltaYDeg);
+    const nextYRad = wrapRadians(currentYRad + deltaYRad);
+    return { ...prop, rotation: [prop.rotation[0], nextYRad, prop.rotation[2]] };
+  });
+}
+
+export function getGenericPropRotationDeg(id: GenericPropId): number {
+  const prop = getGenericProp(id);
+  if (!prop) return 0;
+  return Number(radToDeg(prop.rotation[1]).toFixed(1));
+}
+
 export function getGenericPropsSnapshot(): GenericProp[] {
   return propsState;
 }
