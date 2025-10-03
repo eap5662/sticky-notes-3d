@@ -37,7 +37,6 @@ type GenericTarget = {
   label: string;
   description: string;
   scale: number;
-  status: string;
 };
 
 type ScaleTarget = FixedTarget | GenericTarget;
@@ -70,7 +69,6 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
       label: selectedGeneric.label ?? 'Prop',
       description: selectedGeneric.label ? `${selectedGeneric.label} (Generic)` : 'Generic prop',
       scale: selectedGeneric.scale[0],
-      status: selectedGeneric.status,
     };
   }, [selectedGeneric]);
 
@@ -113,8 +111,6 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     .filter(Boolean)
     .join(' ');
 
-  const isDisabled = target.type === 'generic' && target.status !== 'editing';
-
   return (
     <div className={containerClass}>
       <button
@@ -144,25 +140,18 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
               value={pendingValue}
               onChange={(event) => handleScaleChange(Number(event.target.value))}
               className="mt-2 w-full"
-              disabled={isDisabled}
             />
             <div className="mt-2 flex items-center justify-between text-[11px] text-white/60">
               <span>{MIN_SCALE.toFixed(1)}x</span>
               <button
                 type="button"
-                className="rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10 disabled:opacity-40"
+                className="rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10"
                 onClick={handleReset}
-                disabled={isDisabled}
               >
                 Reset
               </button>
               <span>{MAX_SCALE.toFixed(1)}x</span>
             </div>
-            {isDisabled && (
-              <div className="mt-2 rounded bg-white/10 px-2 py-1 text-[10px] uppercase tracking-wide text-white/70">
-                Exit editing mode to adjust scale
-              </div>
-            )}
           </div>
         </div>
       )}
