@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useCamera } from '@/state/cameraSlice';
 import { setUniformPropScale } from '@/state/propScaleStore';
+import { setGenericPropUniformScale } from '@/state/genericPropsStore';
 import { usePropScale } from '@/canvas/hooks/usePropScale';
+import { useSelection } from '@/canvas/hooks/useSelection';
+import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import type { PropId } from '@/state/propBoundsStore';
 
 const MIN_SCALE = 0.6;
@@ -20,32 +23,87 @@ function describeProp(id: PropId) {
   return { label: 'Desk', description: 'Workspace surface' };
 }
 
+type FixedTarget = {
+  type: 'fixed';
+  id: PropId;
+  label: string;
+  description: string;
+  scale: number;
+};
+
+type GenericTarget = {
+  type: 'generic';
+  id: string;
+  label: string;
+  description: string;
+  scale: number;
+  status: string;
+};
+
+type ScaleTarget = FixedTarget | GenericTarget;
+
 export default function PropScaleControls({ className = '' }: PropScaleControlsProps = {}) {
   const mode = useCamera((s) => s.mode);
-  const activeId: PropId = mode.kind === 'screen' ? 'monitor1' : 'desk';
-  const activeInfo = useMemo(() => describeProp(activeId), [activeId]);
+  const selection = useSelection();
+  const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
+  const selectedGeneric = useGenericProp(selectedGenericId);
 
-  const scaleVec = usePropScale(activeId);
-  const uniformScale = useMemo(() => scaleVec[0], [scaleVec]);
+  const fallbackId: PropId = mode.kind === 'screen' ? 'monitor1' : 'desk';
+  const fallbackInfo = useMemo(() => describeProp(fallbackId), [fallbackId]);
+  const fallbackScaleVec = usePropScale(fallbackId);
+  const fallbackTarget = useMemo<FixedTarget>(
+    () => ({
+      type: 'fixed',
+      id: fallbackId,
+      label: fallbackInfo.label,
+      description: fallbackInfo.description,
+      scale: fallbackScaleVec[0],
+    }),
+    [fallbackId, fallbackInfo, fallbackScaleVec],
+  );
 
+  const genericTarget = useMemo<GenericTarget | null>(() => {
+    if (!selectedGeneric) return null;
+    return {
+      type: 'generic',
+      id: selectedGeneric.id,
+      label: selectedGeneric.label ?? 'Prop',
+      description: selectedGeneric.label ? `${selectedGeneric.label} (Generic)` : 'Generic prop',
+      scale: selectedGeneric.scale[0],
+      status: selectedGeneric.status,
+    };
+  }, [selectedGeneric]);
+
+  const target: ScaleTarget = genericTarget ?? fallbackTarget;
   const [isOpen, setIsOpen] = useState(false);
-  const [pendingValue, setPendingValue] = useState(uniformScale);
+  const [pendingValue, setPendingValue] = useState(target.scale);
+
+  const targetKey = `${target.type}:${target.id}`;
 
   useEffect(() => {
-    setPendingValue(uniformScale);
-  }, [uniformScale, activeId]);
+    setPendingValue(target.scale);
+  }, [target.scale, targetKey]);
 
   const handleScaleChange = useCallback(
     (next: number) => {
       setPendingValue(next);
-      setUniformPropScale(activeId, Number(next.toFixed(3)));
+      const normalized = Number(next.toFixed(3));
+      if (genericTarget) {
+        setGenericPropUniformScale(genericTarget.id, normalized);
+      } else {
+        setUniformPropScale(fallbackId, normalized);
+      }
     },
-    [activeId],
+    [genericTarget, fallbackId],
   );
 
   const handleReset = useCallback(() => {
-    setUniformPropScale(activeId, 1);
-  }, [activeId]);
+    if (genericTarget) {
+      setGenericPropUniformScale(genericTarget.id, 1);
+    } else {
+      setUniformPropScale(fallbackId, 1);
+    }
+  }, [genericTarget, fallbackId]);
 
   const toggleOpen = useCallback(() => {
     setIsOpen((prev) => !prev);
@@ -55,6 +113,8 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     .filter(Boolean)
     .join(' ');
 
+  const isDisabled = target.type === 'generic' && target.status !== 'editing';
+
   return (
     <div className={containerClass}>
       <button
@@ -62,14 +122,14 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
         className="pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"
         onClick={toggleOpen}
       >
-        {isOpen ? 'Hide Scale' : `Scale: ${activeInfo.label}`}
+        {isOpen ? 'Hide Scale' : `Scale: ${target.label}`}
       </button>
 
       {isOpen && (
         <div className="pointer-events-auto w-60 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
           <div className="text-xs uppercase tracking-wide text-white/70">Adjusting</div>
-          <div className="mt-1 font-semibold">{activeInfo.label}</div>
-          <div className="text-xs text-white/60">{activeInfo.description}</div>
+          <div className="mt-1 font-semibold">{target.label}</div>
+          <div className="text-xs text-white/60">{target.description}</div>
 
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs uppercase tracking-wide text-white/70">
@@ -84,18 +144,25 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
               value={pendingValue}
               onChange={(event) => handleScaleChange(Number(event.target.value))}
               className="mt-2 w-full"
+              disabled={isDisabled}
             />
             <div className="mt-2 flex items-center justify-between text-[11px] text-white/60">
               <span>{MIN_SCALE.toFixed(1)}x</span>
               <button
                 type="button"
-                className="rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10"
+                className="rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10 disabled:opacity-40"
                 onClick={handleReset}
+                disabled={isDisabled}
               >
                 Reset
               </button>
               <span>{MAX_SCALE.toFixed(1)}x</span>
             </div>
+            {isDisabled && (
+              <div className="mt-2 rounded bg-white/10 px-2 py-1 text-[10px] uppercase tracking-wide text-white/70">
+                Exit editing mode to adjust scale
+              </div>
+            )}
           </div>
         </div>
       )}

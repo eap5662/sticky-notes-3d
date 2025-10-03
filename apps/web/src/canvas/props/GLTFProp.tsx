@@ -35,6 +35,8 @@ type BoundingBoxAnchor = {
 
 export type AnchorConfig = VectorAnchor | BoundingBoxAnchor;
 
+type GroupProps = JSX.IntrinsicElements['group'];
+
 type Props = {
   url: string;
   registerSurfaces?: SurfaceReg[];
@@ -44,6 +46,8 @@ type Props = {
   anchor?: AnchorConfig;
   onLoaded?: (root: THREE.Object3D, nodes: Record<string, THREE.Object3D>) => void;
   propId?: PropId;
+  onBoundsChanged?: (bounds: { min: [number, number, number]; max: [number, number, number] }) => void;
+  groupProps?: GroupProps;
 };
 
 function pickAxisValue(bounds: THREE.Box3, axis: 'x' | 'y' | 'z', mode: AnchorAxis) {
@@ -90,6 +94,8 @@ export default function GLTFProp({
   anchor,
   onLoaded,
   propId,
+  onBoundsChanged,
+  groupProps,
 }: Props) {
   const { scene } = useGLTF(url);
   const groupRef = React.useRef<THREE.Group>(null);
@@ -170,7 +176,6 @@ export default function GLTFProp({
   }, [scene, nodes, registerSurfaces, url, onLoaded, transformKey]);
 
   React.useEffect(() => {
-    if (!propId) return;
     const group = groupRef.current;
     if (!group) return;
 
@@ -178,8 +183,13 @@ export default function GLTFProp({
     const bounds = new THREE.Box3().setFromObject(group);
     if (bounds.isEmpty()) return;
 
-    setPropBounds(propId, { min: toVec3(bounds.min), max: toVec3(bounds.max) });
-  }, [propId, scene.uuid, position, rotation, scale, anchorTuple]);
+    const payload = { min: toVec3(bounds.min), max: toVec3(bounds.max) };
+
+    if (propId) {
+      setPropBounds(propId, payload);
+    }
+    onBoundsChanged?.(payload);
+  }, [propId, onBoundsChanged, scene.uuid, position, rotation, scale, anchorTuple]);
 
   React.useEffect(() => {
     if (!propId) return;
@@ -191,7 +201,7 @@ export default function GLTFProp({
   const appliedScale = scale ?? 1;
 
   return (
-    <group ref={groupRef} position={position} rotation={rotation}>
+    <group ref={groupRef} position={position} rotation={rotation} {...groupProps}>
       <group position={anchorTuple}>
         <group scale={appliedScale}>
           <group position={negativeAnchorTuple}>

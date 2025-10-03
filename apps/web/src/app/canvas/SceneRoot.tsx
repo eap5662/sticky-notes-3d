@@ -18,6 +18,9 @@ import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
 import { usePropScale } from "@/canvas/hooks/usePropScale";
 import LayoutControls from "@/canvas/LayoutControls";
 import PropScaleControls from "@/canvas/PropScaleControls";
+import GenericPropsLayer from "@/canvas/GenericPropsLayer";
+import GenericPropControls from "@/canvas/GenericPropControls";
+import GenericPropScaleBanner from "@/canvas/GenericPropScaleBanner";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -95,6 +98,7 @@ export default function SceneRoot() {
     <div className="relative h-[70vh] min-h-[540px]">
       <DebugHud />
       <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
+        <GenericPropControls />
         <LayoutControls />
         <PropScaleControls />
       </div>
@@ -127,10 +131,13 @@ export default function SceneRoot() {
             scale={monitorScale}
           />
 
+          <GenericPropsLayer />
           <Surfaces />
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
         </Suspense>
       </Canvas>
+
+      <GenericPropScaleBanner />
 
       {!surfacesReady && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md bg-black/60 px-4 py-2 text-sm text-white">
@@ -140,8 +147,3 @@ export default function SceneRoot() {
     </div>
   );
 }
-
-
-
-
-
