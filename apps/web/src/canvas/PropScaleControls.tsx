@@ -96,6 +96,10 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
       setIsOpen(true);
     }
 
+    if (genericTarget.status !== 'editing' && prevGenericStatusRef.current === 'editing') {
+      setIsOpen(false);
+    }
+
     prevGenericStatusRef.current = genericTarget.status;
   }, [genericTarget]);
 

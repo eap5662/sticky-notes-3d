@@ -35,7 +35,7 @@ type GenericPropBlueprint = {
 type Subscriber = () => void;
 
 const listeners = new Set<Subscriber>();
-const STAGING_POSITION: Vec3 = [0.6, 0.5, -0.2];
+const STAGING_POSITION: Vec3 = [0.6, 0.05, -0.2];
 const DEFAULT_ROTATION: Vec3 = [0, 0, 0];
 const DEFAULT_SCALE: Vec3 = [1, 1, 1];
 

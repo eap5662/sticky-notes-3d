@@ -41,6 +41,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const dragActiveRef = useRef(false);
   const pointerIdRef = useRef<number | null>(null);
   const grabOffsetRef = useRef(new THREE.Vector3());
+  const initialBoundsOffsetRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -203,17 +204,20 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     if (!isOverDesk) return;
     if (prop.status === 'dragging' && dragActiveRef.current) return;
 
-    const desiredFoot = deskHeight + DESK_CLEARANCE;
-    const currentFoot = prop.bounds.min[1];
-    if (currentFoot >= desiredFoot - CLEARANCE_EPSILON) {
-      return;
+    // Capture the initial bounds offset (local-space foot position) on first bounds arrival
+    if (initialBoundsOffsetRef.current === null) {
+      initialBoundsOffsetRef.current = prop.bounds.min[1] - prop.position[1];
     }
-    const delta = desiredFoot - currentFoot;
-    const targetY = prop.position[1] + delta;
+
+    const desiredFoot = deskHeight + DESK_CLEARANCE;
+    const localFootOffset = initialBoundsOffsetRef.current;
+    const targetY = desiredFoot - localFootOffset;
+
+    // Only adjust if the error is significant
     if (Math.abs(prop.position[1] - targetY) > CLEARANCE_EPSILON) {
       setGenericPropPosition(prop.id, [prop.position[0], targetY, prop.position[2]]);
     }
-  }, [deskHeight, propMinY, isOverDesk, prop.bounds, prop.id, prop.position, prop.status]);
+  }, [deskHeight, isOverDesk, prop.bounds, prop.id, prop.position, prop.status]);
 
   const highlightData = useMemo(() => {
     if (!prop.bounds) {
