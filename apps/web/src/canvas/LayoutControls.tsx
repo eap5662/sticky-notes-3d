@@ -1,8 +1,11 @@
-﻿import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { rotateDesk, nudgeMonitor, resetLayoutOverrides } from "@/state/layoutOverridesStore";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
+import { useSelection } from "@/canvas/hooks/useSelection";
+import { useGenericProp } from "@/canvas/hooks/useGenericProps";
+import { rotateGenericProp, getGenericPropRotationDeg } from "@/state/genericPropsStore";
 
 const ROTATE_STEP_DEG = 5;
 const MONITOR_STEP = 0.035;
@@ -107,12 +110,48 @@ function HoldButton({ onActivate, className, children, holdIntervalMs }: HoldBut
   );
 }
 
-export default function LayoutControls() {
+type LayoutControlsProps = {
+  className?: string;
+};
+
+export default function LayoutControls({ className = "" }: LayoutControlsProps = {}) {
   const overrides = useLayoutOverridesState();
   const [isOpen, setIsOpen] = useState(false);
 
+  const selection = useSelection();
+  const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
+  const selectedGeneric = useGenericProp(selectedGenericId);
+
+  const rotationTarget = selectedGeneric
+    ? { type: 'generic' as const, id: selectedGeneric.id, label: selectedGeneric.label ?? 'Prop' }
+    : { type: 'desk' as const };
+
+  const currentRotationDeg = rotationTarget.type === 'generic'
+    ? getGenericPropRotationDeg(rotationTarget.id)
+    : overrides.deskYawDeg;
+
+  const handleRotateLeft = useCallback(() => {
+    if (rotationTarget.type === 'generic') {
+      rotateGenericProp(rotationTarget.id, -ROTATE_STEP_DEG);
+    } else {
+      rotateDesk(-ROTATE_STEP_DEG);
+    }
+  }, [rotationTarget]);
+
+  const handleRotateRight = useCallback(() => {
+    if (rotationTarget.type === 'generic') {
+      rotateGenericProp(rotationTarget.id, ROTATE_STEP_DEG);
+    } else {
+      rotateDesk(ROTATE_STEP_DEG);
+    }
+  }, [rotationTarget]);
+
+  const containerClass = ["pointer-events-none flex flex-col items-end gap-2", className]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
+    <div className={containerClass}>
       <button
         type="button"
         className="pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"
@@ -124,24 +163,26 @@ export default function LayoutControls() {
       {isOpen && (
         <div className="pointer-events-auto w-64 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
           <div>
-            <div className="font-semibold">Desk Rotation</div>
+            <div className="font-semibold">
+              {rotationTarget.type === 'generic' ? `${rotationTarget.label} Rotation` : 'Desk Rotation'}
+            </div>
             <div className="mt-2 flex gap-2">
               <HoldButton
                 className="flex-1 rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={() => rotateDesk(-ROTATE_STEP_DEG)}
+                onActivate={handleRotateLeft}
                 holdIntervalMs={DESK_HOLD_INTERVAL_MS}
               >
                 Rotate Left
               </HoldButton>
               <HoldButton
                 className="flex-1 rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={() => rotateDesk(ROTATE_STEP_DEG)}
+                onActivate={handleRotateRight}
                 holdIntervalMs={DESK_HOLD_INTERVAL_MS}
               >
                 Rotate Right
               </HoldButton>
             </div>
-            <div className="mt-1 text-xs text-white/70">Yaw: {overrides.deskYawDeg.toFixed(1)}&deg;</div>
+            <div className="mt-1 text-xs text-white/70">Yaw: {currentRotationDeg.toFixed(1)}&deg;</div>
           </div>
 
           <div className="mt-3">

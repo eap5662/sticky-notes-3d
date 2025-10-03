@@ -18,6 +18,7 @@ import { useEffect, useRef } from "react";
 import { useThree } from "@react-three/fiber";
 import { useCamera, clampPose } from "@/state/cameraSlice";
 import { useLayoutCameraTarget } from "@/canvas/hooks/useLayoutFrame";
+import { isCameraOrbitLocked, subscribeCameraOrbit } from "@/state/cameraInteractionStore";
 
 /**
  * Fallback desk target: used until the auto-layout pass resolves the live target.
@@ -60,9 +61,22 @@ export default function DeskViewController() {
   useEffect(() => {
     if (mode.kind !== "desk") return;
 
+    const unsubscribe = subscribeCameraOrbit(() => {
+      if (isCameraOrbitLocked()) {
+        dragging.current = false;
+      }
+    });
+
+    return () => unsubscribe();
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode.kind !== "desk") return;
+
     const el = gl.domElement;
 
     function onWheel(e: WheelEvent) {
+      if (isCameraOrbitLocked()) return;
       const s = Math.sign(e.deltaY);
       dollyBy(s * DOLLY_STEP);
     }
@@ -77,6 +91,10 @@ export default function DeskViewController() {
     const el = gl.domElement;
 
     function onPointerDown(e: PointerEvent) {
+      if (isCameraOrbitLocked()) {
+        dragging.current = false;
+        return;
+      }
       dragging.current = true;
       lastX.current = e.clientX;
       lastY.current = e.clientY;
@@ -85,6 +103,10 @@ export default function DeskViewController() {
 
     function onPointerMove(e: PointerEvent) {
       if (!dragging.current) return;
+      if (isCameraOrbitLocked()) {
+        dragging.current = false;
+        return;
+      }
       const dx = e.clientX - lastX.current;
       const dy = e.clientY - lastY.current;
       lastX.current = e.clientX;

@@ -16,15 +16,74 @@ type SurfaceReg = {
   onExtract?: (info: ReturnType<typeof extractSurfaceFromNode>['debug']) => void;
 };
 
+type AnchorAxis = 'min' | 'center' | 'max';
+
+type VectorAnchor = {
+  type: 'vector';
+  value: [number, number, number];
+};
+
+type BoundingBoxAnchor = {
+  type: 'bbox';
+  align: {
+    x: AnchorAxis;
+    y: AnchorAxis;
+    z: AnchorAxis;
+  };
+  offset?: [number, number, number];
+};
+
+export type AnchorConfig = VectorAnchor | BoundingBoxAnchor;
+
+type GroupProps = JSX.IntrinsicElements['group'];
+
 type Props = {
   url: string;
   registerSurfaces?: SurfaceReg[];
   position?: [number, number, number];
   rotation?: [number, number, number];
   scale?: number | [number, number, number];
+  anchor?: AnchorConfig;
   onLoaded?: (root: THREE.Object3D, nodes: Record<string, THREE.Object3D>) => void;
   propId?: PropId;
+  onBoundsChanged?: (bounds: { min: [number, number, number]; max: [number, number, number] }) => void;
+  groupProps?: GroupProps;
 };
+
+function pickAxisValue(bounds: THREE.Box3, axis: 'x' | 'y' | 'z', mode: AnchorAxis) {
+  const min = bounds.min[axis];
+  const max = bounds.max[axis];
+  if (mode === 'min') return min;
+  if (mode === 'max') return max;
+  return (min + max) / 2;
+}
+
+function computeAnchor(scene: THREE.Object3D, config?: AnchorConfig): THREE.Vector3 | null {
+  if (!config) return null;
+
+  if (config.type === 'vector') {
+    const [x, y, z] = config.value;
+    return new THREE.Vector3(x, y, z);
+  }
+
+  scene.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(scene);
+  if (bounds.isEmpty()) {
+    return new THREE.Vector3(0, 0, 0);
+  }
+
+  const anchor = new THREE.Vector3(
+    pickAxisValue(bounds, 'x', config.align.x),
+    pickAxisValue(bounds, 'y', config.align.y),
+    pickAxisValue(bounds, 'z', config.align.z),
+  );
+
+  if (config.offset) {
+    anchor.add(new THREE.Vector3(config.offset[0], config.offset[1], config.offset[2]));
+  }
+
+  return anchor;
+}
 
 export default function GLTFProp({
   url,
@@ -32,12 +91,25 @@ export default function GLTFProp({
   position,
   rotation,
   scale,
+  anchor,
   onLoaded,
   propId,
+  onBoundsChanged,
+  groupProps,
 }: Props) {
   const { scene } = useGLTF(url);
   const groupRef = React.useRef<THREE.Group>(null);
   const didNotifyLoaded = React.useRef(false);
+
+  const anchorVector = React.useMemo(() => computeAnchor(scene, anchor), [scene, anchor]);
+  const anchorTuple = React.useMemo<[number, number, number]>(() => {
+    if (!anchorVector) return [0, 0, 0];
+    return [anchorVector.x, anchorVector.y, anchorVector.z];
+  }, [anchorVector]);
+  const negativeAnchorTuple = React.useMemo<[number, number, number]>(
+    () => [-anchorTuple[0], -anchorTuple[1], -anchorTuple[2]],
+    [anchorTuple],
+  );
 
   const nodes = React.useMemo(() => {
     const map: Record<string, THREE.Object3D> = {};
@@ -104,7 +176,6 @@ export default function GLTFProp({
   }, [scene, nodes, registerSurfaces, url, onLoaded, transformKey]);
 
   React.useEffect(() => {
-    if (!propId) return;
     const group = groupRef.current;
     if (!group) return;
 
@@ -112,8 +183,13 @@ export default function GLTFProp({
     const bounds = new THREE.Box3().setFromObject(group);
     if (bounds.isEmpty()) return;
 
-    setPropBounds(propId, { min: toVec3(bounds.min), max: toVec3(bounds.max) });
-  }, [propId, scene.uuid, position, rotation, scale]);
+    const payload = { min: toVec3(bounds.min), max: toVec3(bounds.max) };
+
+    if (propId) {
+      setPropBounds(propId, payload);
+    }
+    onBoundsChanged?.(payload);
+  }, [propId, onBoundsChanged, scene.uuid, position, rotation, scale, anchorTuple]);
 
   React.useEffect(() => {
     if (!propId) return;
@@ -122,9 +198,17 @@ export default function GLTFProp({
     };
   }, [propId]);
 
+  const appliedScale = scale ?? 1;
+
   return (
-    <group ref={groupRef} position={position} rotation={rotation} scale={scale}>
-      <primitive object={scene} />
+    <group ref={groupRef} position={position} rotation={rotation} {...groupProps}>
+      <group position={anchorTuple}>
+        <group scale={appliedScale}>
+          <group position={negativeAnchorTuple}>
+            <primitive object={scene} />
+          </group>
+        </group>
+      </group>
     </group>
   );
 }

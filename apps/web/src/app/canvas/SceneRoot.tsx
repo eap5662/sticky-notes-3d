@@ -15,7 +15,13 @@ import { DeskProp } from "@/canvas/props/DeskProp";
 import { MonitorProp } from "@/canvas/props/MonitorProp";
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
+import { usePropScale } from "@/canvas/hooks/usePropScale";
 import LayoutControls from "@/canvas/LayoutControls";
+import PropScaleControls from "@/canvas/PropScaleControls";
+import GenericPropsLayer from "@/canvas/GenericPropsLayer";
+import GenericPropControls from "@/canvas/GenericPropControls";
+import GenericPropScaleBanner from "@/canvas/GenericPropScaleBanner";
+import { clearSelection } from "@/state/selectionStore";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -30,10 +36,13 @@ export default function SceneRoot() {
   const deskRotation: [number, number, number] = [0, deskYawRad, 0];
   const monitorPlacement = layoutState.monitorPlacement;
 
+  const deskScale = usePropScale("desk");
+  const monitorScale = usePropScale("monitor1");
+
   const handleLayoutWarnings = useCallback((warnings: LayoutWarning[]) => {
     warnings.forEach((warning) => {
       const log = warning.severity === "error" ? console.error : console.warn;
-      log(`[layout] ${warning.id}: ${warning.message}`);
+      log('[layout] ' + warning.id + ': ' + warning.message);
     });
   }, []);
 
@@ -89,7 +98,11 @@ export default function SceneRoot() {
   return (
     <div className="relative h-[70vh] min-h-[540px]">
       <DebugHud />
-      <LayoutControls />
+      <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
+        <GenericPropControls />
+        <LayoutControls />
+        <PropScaleControls />
+      </div>
       <Canvas
         style={{ width: "100%", height: "100%" }}
         camera={{ position: [0, 1.35, 3.6], fov: 48 }}
@@ -109,19 +122,24 @@ export default function SceneRoot() {
           scene.fog = new THREE.Fog(bg, 6, 16);
         }}
         onPointerDown={onPointerDown}
+        onPointerMissed={() => clearSelection()}
       >
         <Suspense fallback={null}>
-          <DeskProp url="/models/DeskTopPlane.glb" rotation={deskRotation} />
+          <DeskProp url="/models/DeskTopPlane.glb" rotation={deskRotation} scale={deskScale} />
           <MonitorProp
             url="/models/monitor_processed.glb"
             position={monitorPosition}
             rotation={monitorRotation}
+            scale={monitorScale}
           />
 
+          <GenericPropsLayer />
           <Surfaces />
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
         </Suspense>
       </Canvas>
+
+      <GenericPropScaleBanner />
 
       {!surfacesReady && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md bg-black/60 px-4 py-2 text-sm text-white">
@@ -131,4 +149,3 @@ export default function SceneRoot() {
     </div>
   );
 }
-

@@ -1,10 +1,10 @@
-﻿"use client";
+"use client";
 /**
  * ScreenViewController
  * --------------------
  * Controls the camera while you're in the "screen" mode (close-up of a monitor surface).
  *
- * ðŸ” How this compares to DeskViewController:
+ * dY"? How this compares to DeskViewController:
  * - SAME: It's a behavior-only component (returns null), uses React Three Fiber hooks,
  *   subscribes to the same Zustand store (yaw/pitch/dolly), and attaches wheel + drag events.
  * - DIFFERENT:
@@ -20,6 +20,7 @@ import { useThree } from "@react-three/fiber";
 import { useCamera, clampPose } from "@/state/cameraSlice";
 import { getSurface } from "@/canvas/surfaces";
 import { uvToWorld } from "@/canvas/math/plane";
+import { isCameraOrbitLocked, subscribeCameraOrbit } from "@/state/cameraInteractionStore";
 
 /**
  * Sensitivity constants for *screen* mode.
@@ -63,7 +64,7 @@ export default function ScreenViewController() {
 
   /**
    * EFFECT 1: Apply (yaw, pitch, dolly) to the camera, looking at the dynamic target.
-   * ðŸ” VS Desk: Same math, different target point (here: monitor center).
+   * dY"? VS Desk: Same math, different target point (here: monitor center).
    */
   useEffect(() => {
     if (mode.kind !== "screen" || !target) return;
@@ -87,15 +88,28 @@ export default function ScreenViewController() {
   const lastX = useRef(0);
   const lastY = useRef(0);
 
+  useEffect(() => {
+    if (mode.kind !== "screen") return;
+
+    const unsubscribe = subscribeCameraOrbit(() => {
+      if (isCameraOrbitLocked()) {
+        dragging.current = false;
+      }
+    });
+
+    return () => unsubscribe();
+  }, [mode]);
+
   /**
    * EFFECT 2: Wheel to dolly (zoom).
-   * ðŸ” VS Desk: Same listener pattern, smaller DOLLY_STEP for finer control.
+   * dY"? VS Desk: Same listener pattern, smaller DOLLY_STEP for finer control.
    */
   useEffect(() => {
     if (mode.kind !== "screen") return;
     const el = gl.domElement;
 
     function onWheel(e: WheelEvent) {
+      if (isCameraOrbitLocked()) return;
       const s = Math.sign(e.deltaY);
       dollyBy(s * DOLLY_STEP); // store enforces screen-mode clamps
     }
@@ -106,7 +120,7 @@ export default function ScreenViewController() {
 
   /**
    * EFFECT 3: Drag to orbit.
-   * ðŸ” VS Desk: Same event wiring, same mapping of dx->yaw and dy->pitch,
+   * dY"? VS Desk: Same event wiring, same mapping of dx->yaw and dy->pitch,
    *   but ORBIT_SPEED is reduced for tighter control in close-up view.
    */
   useEffect(() => {
@@ -115,6 +129,10 @@ export default function ScreenViewController() {
     const el = gl.domElement;
 
     function onPointerDown(e: PointerEvent) {
+      if (isCameraOrbitLocked()) {
+        dragging.current = false;
+        return;
+      }
       dragging.current = true;
       lastX.current = e.clientX;
       lastY.current = e.clientY;
@@ -123,6 +141,10 @@ export default function ScreenViewController() {
 
     function onPointerMove(e: PointerEvent) {
       if (!dragging.current) return;
+      if (isCameraOrbitLocked()) {
+        dragging.current = false;
+        return;
+      }
       const dx = e.clientX - lastX.current; //delta x from 2 pointers
       const dy = e.clientY - lastY.current;
       lastX.current = e.clientX;
@@ -153,7 +175,7 @@ export default function ScreenViewController() {
 
   /**
    * EFFECT 4 (optional): Defensive clamping.
-   * ðŸ” VS Desk: Same idea. The store actions already clamp; this just guards
+   * dY"? VS Desk: Same idea. The store actions already clamp; this just guards
    * against any external changes that might bypass actions.
    */
   useEffect(() => {
