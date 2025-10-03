@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import * as THREE from 'three';
 
 import { useLayoutFrameState } from './useLayoutFrame';
 import { useSurface } from './useSurfaces';
@@ -12,12 +13,14 @@ import { usePropBounds } from './usePropBounds';
 import type { PropBounds } from '@/state/propBoundsStore';
 import type { LayoutFrame } from '@/state/layoutFrameStore';
 import type { Surface } from '@/canvas/surfaces';
+import { useLayoutOverridesState } from './useLayoutOverrides';
 
 const EPSILON = 1e-4;
 
 type DockConstraintContext = {
   frame: LayoutFrame;
   deskSurface: Surface | null;
+  deskYawRad: number;
 };
 
 function shouldUpdateProp(
@@ -49,30 +52,28 @@ function solveDockPlacementForProp(
 
   const { frame, deskSurface } = context;
 
-  // Reuse the same logic from useAutoLayout's solveDockPlacement
-  // We'll import it directly from useAutoLayout (need to export it)
-  // For now, inline a simplified version focused on generic props
-
   const up = [frame.up[0], frame.up[1], frame.up[2]] as const;
   const right = [frame.right[0], frame.right[1], frame.right[2]] as const;
   const forward = [frame.forward[0], frame.forward[1], frame.forward[2]] as const;
 
-  const deskOrigin = deskSurface ? deskSurface.origin : frame.center;
+  // Use frame.center as the base point (center of desk bounds)
+  const basePoint = frame.center;
 
-  // For now, simple implementation:
   // Position = desk center + lateral*right + depth*forward + lift*up
   const lateral = prop.dockOffset.lateral;
   const depth = prop.dockOffset.depth;
   const lift = prop.dockOffset.lift;
 
   const position: [number, number, number] = [
-    deskOrigin[0] + lateral * right[0] + depth * forward[0] + lift * up[0],
-    deskOrigin[1] + lateral * right[1] + depth * forward[1] + lift * up[1],
-    deskOrigin[2] + lateral * right[2] + depth * forward[2] + lift * up[2],
+    basePoint[0] + lateral * right[0] + depth * forward[0] + lift * up[0],
+    basePoint[1] + lateral * right[1] + depth * forward[1] + lift * up[1],
+    basePoint[2] + lateral * right[2] + depth * forward[2] + lift * up[2],
   ];
 
-  const yaw = prop.dockOffset.yaw;
-  const rotation: [number, number, number] = [0, yaw, 0];
+  // Convert desk-relative yaw to world yaw using actual desk rotation
+  const worldYaw = prop.dockOffset.yaw + context.deskYawRad;
+
+  const rotation: [number, number, number] = [0, worldYaw, 0];
 
   return { position, rotation };
 }
@@ -81,8 +82,16 @@ export function useDockConstraints() {
   const layoutFrame = useLayoutFrameState();
   const deskSurface = useSurface('desk');
   const genericProps = useGenericProps();
+  const overrides = useLayoutOverridesState();
 
   const prevFrameRef = useRef<LayoutFrame | null>(null);
+  const prevDeskYawRef = useRef<number>(0);
+  const genericPropsRef = useRef(genericProps);
+
+  // Keep genericProps ref updated without triggering the main effect
+  useEffect(() => {
+    genericPropsRef.current = genericProps;
+  });
 
   useEffect(() => {
     if (!layoutFrame.frame) {
@@ -91,9 +100,10 @@ export function useDockConstraints() {
     }
 
     const frame = layoutFrame.frame;
+    const deskYawRad = THREE.MathUtils.degToRad(overrides.deskYawDeg);
 
-    // Check if frame actually changed (avoid thrashing)
-    if (prevFrameRef.current) {
+    // Check if frame or desk yaw actually changed (avoid thrashing)
+    if (prevFrameRef.current && prevDeskYawRef.current === deskYawRad) {
       const prev = prevFrameRef.current;
       const unchanged =
         prev.up[0] === frame.up[0] &&
@@ -112,14 +122,16 @@ export function useDockConstraints() {
     }
 
     prevFrameRef.current = frame;
+    prevDeskYawRef.current = deskYawRad;
 
     const context: DockConstraintContext = {
       frame,
       deskSurface,
+      deskYawRad,
     };
 
-    // Update all docked props
-    genericProps.forEach((prop) => {
+    // Update all docked props using the ref (avoids re-running when genericProps changes)
+    genericPropsRef.current.forEach((prop) => {
       if (!prop.docked) return;
 
       const placement = solveDockPlacementForProp(prop, prop.bounds ?? null, context);
@@ -129,5 +141,5 @@ export function useDockConstraints() {
         setGenericPropRotation(prop.id, placement.rotation);
       }
     });
-  }, [layoutFrame.frame, deskSurface, genericProps]);
+  }, [layoutFrame.frame, deskSurface, overrides.deskYawDeg]);
 }

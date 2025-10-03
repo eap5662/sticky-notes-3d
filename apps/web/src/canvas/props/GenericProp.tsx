@@ -106,6 +106,14 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       event.nativeEvent.stopImmediatePropagation?.();
       setSelection({ kind: 'generic', id: prop.id });
 
+      // Docked props cannot be dragged
+      if (prop.docked) {
+        requestAnimationFrame(() => {
+          unlockCameraOrbit();
+        });
+        return;
+      }
+
       let effectiveStatus = prop.status;
       if (prop.status === 'placed') {
         setGenericPropStatus(prop.id, 'dragging');
@@ -131,7 +139,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
 
       event.target.setPointerCapture?.(event.pointerId);
     },
-    [computeIntersection, prop.id, prop.position, prop.status],
+    [computeIntersection, prop.id, prop.position, prop.status, prop.docked],
   );
 
   const finishDrag = useCallback((event: ThreeEvent<PointerEvent>) => {

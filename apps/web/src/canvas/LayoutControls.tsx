@@ -5,7 +5,8 @@ import { rotateDesk, nudgeMonitor, resetLayoutOverrides } from "@/state/layoutOv
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
 import { useSelection } from "@/canvas/hooks/useSelection";
 import { useGenericProp } from "@/canvas/hooks/useGenericProps";
-import { rotateGenericProp, getGenericPropRotationDeg } from "@/state/genericPropsStore";
+import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undockProp } from "@/state/genericPropsStore";
+import { useLayoutFrameState } from "@/canvas/hooks/useLayoutFrame";
 
 const ROTATE_STEP_DEG = 5;
 const MONITOR_STEP = 0.035;
@@ -116,6 +117,7 @@ type LayoutControlsProps = {
 
 export default function LayoutControls({ className = "" }: LayoutControlsProps = {}) {
   const overrides = useLayoutOverridesState();
+  const layoutFrame = useLayoutFrameState();
   const [isOpen, setIsOpen] = useState(false);
 
   const selection = useSelection();
@@ -145,6 +147,51 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
       rotateDesk(ROTATE_STEP_DEG);
     }
   }, [rotationTarget]);
+
+  const handleDock = useCallback(() => {
+    if (!selectedGeneric || !layoutFrame.frame) return;
+
+    // Calculate dock offset from current world position
+    const frame = layoutFrame.frame;
+    const pos = selectedGeneric.position;
+    const rot = selectedGeneric.rotation;
+
+    // Simple offset calculation: position relative to desk center
+    const deskCenter = frame.center;
+    const relativePos = [
+      pos[0] - deskCenter[0],
+      pos[1] - deskCenter[1],
+      pos[2] - deskCenter[2],
+    ];
+
+    // Project onto desk axes
+    const right = frame.right;
+    const forward = frame.forward;
+    const up = frame.up;
+
+    const lateral = relativePos[0] * right[0] + relativePos[1] * right[1] + relativePos[2] * right[2];
+    const depth = relativePos[0] * forward[0] + relativePos[1] * forward[1] + relativePos[2] * forward[2];
+    const lift = relativePos[0] * up[0] + relativePos[1] * up[1] + relativePos[2] * up[2];
+
+    // Get desk's current yaw from overrides (actual rotation)
+    const deskYawRad = (overrides.deskYawDeg * Math.PI) / 180;
+
+    // Store yaw relative to desk (subtract desk yaw from prop yaw)
+    const propWorldYaw = rot[1];
+    const propDeskRelativeYaw = propWorldYaw - deskYawRad;
+
+    dockPropWithOffset(selectedGeneric.id, {
+      lateral,
+      depth,
+      lift,
+      yaw: propDeskRelativeYaw, // Desk-relative rotation
+    });
+  }, [selectedGeneric, layoutFrame.frame, overrides.deskYawDeg]);
+
+  const handleUndock = useCallback(() => {
+    if (!selectedGeneric) return;
+    undockProp(selectedGeneric.id);
+  }, [selectedGeneric]);
 
   const containerClass = ["pointer-events-none flex flex-col items-end gap-2", className]
     .filter(Boolean)
@@ -182,8 +229,36 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
                 Rotate Right
               </HoldButton>
             </div>
-            <div className="mt-1 text-xs text-white/70">Yaw: {currentRotationDeg.toFixed(1)}&deg;</div>
+            <div className="mt-1 text-xs text-white/70">
+              Yaw: {currentRotationDeg.toFixed(1)}&deg;
+              {selectedGeneric && selectedGeneric.docked && <span className="ml-2">(Docked)</span>}
+            </div>
           </div>
+
+          {selectedGeneric && (
+            <div className="mt-3">
+              <div className="font-semibold">Desk Attachment</div>
+              <div className="mt-2">
+                {selectedGeneric.docked ? (
+                  <button
+                    type="button"
+                    className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
+                    onClick={handleUndock}
+                  >
+                    Undock from Desk
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
+                    onClick={handleDock}
+                  >
+                    Dock to Desk
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="mt-3">
             <div className="font-semibold">Monitor Slide</div>
