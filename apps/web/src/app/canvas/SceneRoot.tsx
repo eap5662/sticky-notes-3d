@@ -14,6 +14,7 @@ import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayou
 import { DeskProp } from "@/canvas/props/DeskProp";
 import { MonitorProp } from "@/canvas/props/MonitorProp";
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
+import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
 import { usePropScale } from "@/canvas/hooks/usePropScale";
 import LayoutControls from "@/canvas/LayoutControls";
@@ -31,6 +32,7 @@ export default function SceneRoot() {
   const monitorSurface = useSurface("monitor1");
 
   const layoutState = useAutoLayout();
+  useDockConstraints();
   const overrides = useLayoutOverridesState();
   const deskYawRad = THREE.MathUtils.degToRad(overrides.deskYawDeg);
   const deskRotation: [number, number, number] = [0, deskYawRad, 0];
