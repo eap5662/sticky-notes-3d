@@ -9,6 +9,13 @@ export type GenericPropBounds = {
   max: Vec3;
 };
 
+export type DockOffset = {
+  lateral: number;  // offset along desk.right axis (meters)
+  depth: number;    // offset along desk.forward axis (meters)
+  lift: number;     // offset along desk.up axis (meters)
+  yaw: number;      // rotation relative to desk.forward (radians)
+};
+
 export type GenericProp = {
   id: GenericPropId;
   kind: 'generic';
@@ -21,6 +28,8 @@ export type GenericProp = {
   scale: Vec3;
   status: GenericPropStatus;
   bounds?: GenericPropBounds;
+  docked: boolean;
+  dockOffset?: DockOffset;
 };
 
 type GenericPropBlueprint = {
@@ -106,6 +115,8 @@ export function spawnGenericProp(blueprint: GenericPropBlueprint): GenericProp {
     rotation: normalized.rotation,
     scale: cloneVec(DEFAULT_SCALE),
     status: 'editing',
+    docked: false,
+    dockOffset: undefined,
   };
 
   emit([...propsState, newProp]);
@@ -229,4 +240,37 @@ export function clearGenericProps() {
     return;
   }
   emit([]);
+}
+
+export function dockPropWithOffset(id: GenericPropId, offset: DockOffset) {
+  updateProp(id, (prop) => ({
+    ...prop,
+    docked: true,
+    dockOffset: offset,
+  }));
+}
+
+export function undockProp(id: GenericPropId) {
+  updateProp(id, (prop) => ({
+    ...prop,
+    docked: false,
+    dockOffset: undefined,
+  }));
+}
+
+export function setDockOffset(id: GenericPropId, offset: DockOffset) {
+  updateProp(id, (prop) => {
+    if (!prop.docked) return prop;
+    const prev = prop.dockOffset;
+    if (
+      prev &&
+      prev.lateral === offset.lateral &&
+      prev.depth === offset.depth &&
+      prev.lift === offset.lift &&
+      prev.yaw === offset.yaw
+    ) {
+      return prop;
+    }
+    return { ...prop, dockOffset: offset };
+  });
 }
