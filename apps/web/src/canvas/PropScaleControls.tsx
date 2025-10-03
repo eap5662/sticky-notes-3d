@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useCamera } from '@/state/cameraSlice';
 import { setUniformPropScale } from '@/state/propScaleStore';
@@ -37,6 +37,7 @@ type GenericTarget = {
   label: string;
   description: string;
   scale: number;
+  status: 'editing' | 'dragging' | 'placed';
 };
 
 type ScaleTarget = FixedTarget | GenericTarget;
@@ -69,6 +70,7 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
       label: selectedGeneric.label ?? 'Prop',
       description: selectedGeneric.label ? `${selectedGeneric.label} (Generic)` : 'Generic prop',
       scale: selectedGeneric.scale[0],
+      status: selectedGeneric.status,
     };
   }, [selectedGeneric]);
 
@@ -81,6 +83,21 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
   useEffect(() => {
     setPendingValue(target.scale);
   }, [target.scale, targetKey]);
+
+  const prevGenericStatusRef = useRef<'editing' | 'dragging' | 'placed' | null>(null);
+
+  useEffect(() => {
+    if (!genericTarget) {
+      prevGenericStatusRef.current = null;
+      return;
+    }
+
+    if (genericTarget.status === 'editing' && prevGenericStatusRef.current !== 'editing') {
+      setIsOpen(true);
+    }
+
+    prevGenericStatusRef.current = genericTarget.status;
+  }, [genericTarget]);
 
   const handleScaleChange = useCallback(
     (next: number) => {
@@ -158,3 +175,5 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     </div>
   );
 }
+
+

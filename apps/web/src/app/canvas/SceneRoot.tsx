@@ -21,6 +21,7 @@ import PropScaleControls from "@/canvas/PropScaleControls";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
 import GenericPropControls from "@/canvas/GenericPropControls";
 import GenericPropScaleBanner from "@/canvas/GenericPropScaleBanner";
+import { clearSelection } from "@/state/selectionStore";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
@@ -121,6 +122,7 @@ export default function SceneRoot() {
           scene.fog = new THREE.Fog(bg, 6, 16);
         }}
         onPointerDown={onPointerDown}
+        onPointerMissed={() => clearSelection()}
       >
         <Suspense fallback={null}>
           <DeskProp url="/models/DeskTopPlane.glb" rotation={deskRotation} scale={deskScale} />
