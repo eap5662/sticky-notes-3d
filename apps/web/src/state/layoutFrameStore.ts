@@ -9,11 +9,6 @@ export type LayoutPose = {
   dolly: number;
 };
 
-export type MonitorPlacement = {
-  position: Vec3;
-  rotation: Vec3;
-};
-
 export type LayoutFrame = {
   center: Vec3;
   up: Vec3;
@@ -28,7 +23,6 @@ export type LayoutState = {
   frame: LayoutFrame | null;
   cameraTarget: Vec3 | null;
   deskPose: LayoutPose | null;
-  monitorPlacement: MonitorPlacement | null;
 };
 
 const listeners = new Set<() => void>();
@@ -38,7 +32,6 @@ let state: LayoutState = {
   frame: null,
   cameraTarget: null,
   deskPose: null,
-  monitorPlacement: null,
 };
 
 let cachedSnapshot: LayoutState | null = null;
@@ -91,15 +84,6 @@ function poseEquals(a: LayoutPose | null, b: LayoutPose | null, eps = 1e-6) {
   );
 }
 
-function placementEquals(
-  a: MonitorPlacement | null,
-  b: MonitorPlacement | null
-) {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return vecEquals(a.position, b.position) && vecEquals(a.rotation, b.rotation);
-}
-
 function cloneVec3(vec: Vec3): Vec3 {
   return [vec[0], vec[1], vec[2]];
 }
@@ -128,21 +112,12 @@ function clonePose(pose: LayoutPose | null): LayoutPose | null {
   return { ...pose };
 }
 
-function clonePlacement(placement: MonitorPlacement | null): MonitorPlacement | null {
-  if (!placement) return null;
-  return {
-    position: cloneVec3(placement.position),
-    rotation: cloneVec3(placement.rotation),
-  };
-}
-
 function layoutStateEquals(a: LayoutState, b: LayoutState) {
   return (
     a.status === b.status &&
     frameEquals(a.frame, b.frame) &&
     vecEquals(a.cameraTarget, b.cameraTarget) &&
-    poseEquals(a.deskPose, b.deskPose) &&
-    placementEquals(a.monitorPlacement, b.monitorPlacement)
+    poseEquals(a.deskPose, b.deskPose)
   );
 }
 
@@ -153,15 +128,12 @@ export function setLayoutState(partial: Partial<LayoutState>) {
     partial.cameraTarget === undefined ? state.cameraTarget : partial.cameraTarget;
   const poseValue =
     partial.deskPose === undefined ? state.deskPose : partial.deskPose;
-  const placementValue =
-    partial.monitorPlacement === undefined ? state.monitorPlacement : partial.monitorPlacement;
 
   const next: LayoutState = {
     status: partial.status ?? state.status,
     frame: frameValue ? cloneFrame(frameValue) : null,
     cameraTarget: targetValue ? cloneVec3(targetValue) : null,
     deskPose: clonePose(poseValue),
-    monitorPlacement: clonePlacement(placementValue),
   };
 
   if (!layoutStateEquals(state, next)) {
@@ -177,7 +149,6 @@ export function resetLayoutState() {
     frame: null,
     cameraTarget: null,
     deskPose: null,
-    monitorPlacement: null,
   };
   cachedSnapshot = null;
   notify();
@@ -200,7 +171,6 @@ function cloneLayoutState(current: LayoutState): LayoutState {
     frame: cloneFrame(current.frame),
     cameraTarget: current.cameraTarget ? cloneVec3(current.cameraTarget) : null,
     deskPose: clonePose(current.deskPose),
-    monitorPlacement: clonePlacement(current.monitorPlacement),
   };
 }
 

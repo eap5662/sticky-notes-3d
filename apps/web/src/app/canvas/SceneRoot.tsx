@@ -7,12 +7,10 @@ import { useCamera } from "@/state/cameraSlice";
 import DeskViewController from "@/canvas/Cameras/DeskViewController";
 import ScreenViewController from "@/canvas/Cameras/ScreenViewController";
 import { Surfaces } from "@/canvas/surfaceRendering";
-import { planeProject } from "@/canvas/math/plane";
 import DebugHud from "@/canvas/debugHud";
 import { useSurface } from "@/canvas/hooks/useSurfaces";
 import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayoutValidation";
 import { DeskProp } from "@/canvas/props/DeskProp";
-import { MonitorProp } from "@/canvas/props/MonitorProp";
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
 import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
@@ -29,17 +27,14 @@ export default function SceneRoot() {
   const setMode = useCamera((s) => s.setMode);
 
   const deskSurface = useSurface("desk");
-  const monitorSurface = useSurface("monitor1");
 
   const layoutState = useAutoLayout();
   useDockConstraints();
   const overrides = useLayoutOverridesState();
   const deskYawRad = THREE.MathUtils.degToRad(overrides.deskYawDeg);
   const deskRotation: [number, number, number] = [0, deskYawRad, 0];
-  const monitorPlacement = layoutState.monitorPlacement;
 
   const deskScale = usePropScale("desk");
-  const monitorScale = usePropScale("monitor1");
 
   const handleLayoutWarnings = useCallback((warnings: LayoutWarning[]) => {
     warnings.forEach((warning) => {
@@ -56,35 +51,15 @@ export default function SceneRoot() {
     onReport: handleLayoutWarnings,
   });
 
-  const monitorPosition = monitorPlacement?.position as [number, number, number] | undefined;
-  const monitorRotation = monitorPlacement?.rotation as [number, number, number] | undefined;
-
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!monitorSurface) return;
-
-      const cam = cameraRef.current;
-      const canvas = canvasElRef.current;
-      if (!cam || !canvas) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
-
-      const ndc = new THREE.Vector2(x, y);
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(ndc, cam);
-      const ray = raycaster.ray;
-
-      const hit = planeProject(ray, monitorSurface);
-      if (hit.hit && hit.u >= 0 && hit.u <= 1 && hit.v >= 0 && hit.v <= 1) {
-        setMode({ kind: "screen", surfaceId: "monitor1" });
-      }
+      // Screen mode switching now handled by screen surface interaction
+      // TODO: Implement generic surface click detection if needed
     },
-    [monitorSurface, setMode]
+    [setMode]
   );
 
   useEffect(() => {
@@ -95,7 +70,7 @@ export default function SceneRoot() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setMode]);
 
-  const surfacesReady = !!deskSurface && !!monitorSurface;
+  const surfacesReady = !!deskSurface;
 
   return (
     <div className="relative h-[70vh] min-h-[540px]">
@@ -128,12 +103,6 @@ export default function SceneRoot() {
       >
         <Suspense fallback={null}>
           <DeskProp url="/models/DeskTopPlane.glb" rotation={deskRotation} scale={deskScale} />
-          <MonitorProp
-            url="/models/monitor_processed.glb"
-            position={monitorPosition}
-            rotation={monitorRotation}
-            scale={monitorScale}
-          />
 
           <GenericPropsLayer />
           <Surfaces />
@@ -145,7 +114,7 @@ export default function SceneRoot() {
 
       {!surfacesReady && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md bg-black/60 px-4 py-2 text-sm text-white">
-          Loading desk + monitor surfaces...
+          Loading desk surface...
         </div>
       )}
     </div>

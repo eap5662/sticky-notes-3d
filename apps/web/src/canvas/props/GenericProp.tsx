@@ -15,6 +15,8 @@ import { useSurface } from '@/canvas/hooks/useSurfaces';
 import { planeProject } from '@/canvas/math/plane';
 import { lockCameraOrbit, unlockCameraOrbit } from '@/state/cameraInteractionStore';
 import { useSelection } from '@/canvas/hooks/useSelection';
+import { PROP_CATALOG } from '@/data/propCatalog';
+import { setSurfaceMeta } from '@/state/surfaceMetaStore';
 
 const DEFAULT_ANCHOR = { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } } as const;
 
@@ -42,6 +44,28 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const pointerIdRef = useRef<number | null>(null);
   const grabOffsetRef = useRef(new THREE.Vector3());
   const initialBoundsOffsetRef = useRef<number | null>(null);
+
+  // Get surface config from catalog
+  const catalogEntry = useMemo(() => {
+    return PROP_CATALOG.find(entry => entry.id === prop.catalogId);
+  }, [prop.catalogId]);
+
+  const surfaceRegistrations = useMemo(() => {
+    if (!catalogEntry?.surfaces) return undefined;
+    return catalogEntry.surfaces.map(surf => ({
+      id: surf.id as any,
+      kind: surf.kind as any,
+      nodeName: surf.nodeName,
+      options: surf.options,
+      onExtract: (info: any) => {
+        // Store surface metadata with kind
+        setSurfaceMeta(surf.id as any, {
+          ...info.meta,
+          kind: surf.kind,
+        });
+      },
+    }));
+  }, [catalogEntry]);
 
   useEffect(() => {
     return () => {
@@ -259,6 +283,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         scale={prop.scale}
         anchor={prop.anchor ?? DEFAULT_ANCHOR}
         onBoundsChanged={handleBoundsChanged}
+        registerSurfaces={surfaceRegistrations}
         groupProps={{
           onPointerDown: handlePointerDown,
           onPointerMove: handlePointerMove,

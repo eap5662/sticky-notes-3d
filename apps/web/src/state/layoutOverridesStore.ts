@@ -1,16 +1,11 @@
 ﻿export type LayoutOverridesState = {
   deskYawDeg: number;
-  monitorLateral: number;
-  monitorDepth: number;
 };
 
 const DEFAULT_STATE: LayoutOverridesState = {
   deskYawDeg: 0,
-  monitorLateral: 0,
-  monitorDepth: 0,
 };
 
-const MAX_MONITOR_OFFSET = 0.5;
 const listeners = new Set<() => void>();
 
 let state: LayoutOverridesState = { ...DEFAULT_STATE };
@@ -25,15 +20,7 @@ function cloneState(source: LayoutOverridesState): LayoutOverridesState {
 }
 
 function layoutOverridesEqual(a: LayoutOverridesState, b: LayoutOverridesState) {
-  return (
-    a.deskYawDeg === b.deskYawDeg &&
-    a.monitorLateral === b.monitorLateral &&
-    a.monitorDepth === b.monitorDepth
-  );
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
+  return a.deskYawDeg === b.deskYawDeg;
 }
 
 function wrapDegrees(value: number) {
@@ -70,30 +57,6 @@ export function setDeskYaw(deg: number) {
   updateLayoutOverrides((current) => ({
     ...current,
     deskYawDeg: wrapDegrees(deg),
-  }));
-}
-
-export function nudgeMonitor(lateralDelta: number, depthDelta: number) {
-  updateLayoutOverrides((current) => ({
-    ...current,
-    monitorLateral: clamp(
-      Number((current.monitorLateral + lateralDelta).toFixed(6)),
-      -MAX_MONITOR_OFFSET,
-      MAX_MONITOR_OFFSET,
-    ),
-    monitorDepth: clamp(
-      Number((current.monitorDepth + depthDelta).toFixed(6)),
-      -MAX_MONITOR_OFFSET,
-      MAX_MONITOR_OFFSET,
-    ),
-  }));
-}
-
-export function setMonitorOffsets(lateral: number, depth: number) {
-  updateLayoutOverrides((current) => ({
-    ...current,
-    monitorLateral: clamp(Number(lateral.toFixed(6)), -MAX_MONITOR_OFFSET, MAX_MONITOR_OFFSET),
-    monitorDepth: clamp(Number(depth.toFixed(6)), -MAX_MONITOR_OFFSET, MAX_MONITOR_OFFSET),
   }));
 }
 

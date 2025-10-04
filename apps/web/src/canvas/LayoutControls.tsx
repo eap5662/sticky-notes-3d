@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
-import { rotateDesk, nudgeMonitor, resetLayoutOverrides } from "@/state/layoutOverridesStore";
+import { rotateDesk, resetLayoutOverrides } from "@/state/layoutOverridesStore";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
 import { useSelection } from "@/canvas/hooks/useSelection";
 import { useGenericProp } from "@/canvas/hooks/useGenericProps";
@@ -9,13 +9,8 @@ import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undoc
 import { useLayoutFrameState } from "@/canvas/hooks/useLayoutFrame";
 
 const ROTATE_STEP_DEG = 5;
-const MONITOR_STEP = 0.035;
 const DEFAULT_HOLD_INTERVAL_MS = 500;
 const DESK_HOLD_INTERVAL_MS = 150;
-
-function formatMillimeters(value: number) {
-  return (value * 1000).toFixed(0);
-}
 
 type HoldButtonProps = {
   onActivate: () => void;
@@ -259,39 +254,6 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
               </div>
             </div>
           )}
-
-          <div className="mt-3">
-            <div className="font-semibold">Monitor Slide</div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <HoldButton
-                className="rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={() => nudgeMonitor(-MONITOR_STEP, 0)}
-              >
-                Slide Left
-              </HoldButton>
-              <HoldButton
-                className="rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={() => nudgeMonitor(MONITOR_STEP, 0)}
-              >
-                Slide Right
-              </HoldButton>
-              <HoldButton
-                className="rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={() => nudgeMonitor(0, MONITOR_STEP)}
-              >
-                Forward
-              </HoldButton>
-              <HoldButton
-                className="rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={() => nudgeMonitor(0, -MONITOR_STEP)}
-              >
-                Backward
-              </HoldButton>
-            </div>
-            <div className="mt-1 text-xs text-white/70">
-              Lateral: {formatMillimeters(overrides.monitorLateral)} mm | Depth: {formatMillimeters(overrides.monitorDepth)} mm
-            </div>
-          </div>
 
           <button
             type="button"

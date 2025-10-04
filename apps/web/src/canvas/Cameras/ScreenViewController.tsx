@@ -21,6 +21,7 @@ import { useCamera, clampPose } from "@/state/cameraSlice";
 import { getSurface } from "@/canvas/surfaces";
 import { uvToWorld } from "@/canvas/math/plane";
 import { isCameraOrbitLocked, subscribeCameraOrbit } from "@/state/cameraInteractionStore";
+import { getSurfacesByKind } from "@/state/surfaceMetaStore";
 
 /**
  * Sensitivity constants for *screen* mode.
@@ -52,14 +53,22 @@ export default function ScreenViewController() {
 
   /**
    * Desk used a fixed target (DESK_TARGET). Here the target is dynamic:
-   *   - We read the Surface by id.
+   *   - We query for screen surfaces by kind (supports any spawned monitor).
    *   - We convert (u=0.5, v=0.5) to world coordinates for the *center of the screen*.
-   *   - useMemo caches the result until mode.surfaceId changes.
+   *   - useMemo caches the result until screen surfaces change.
    */
   const target = useMemo(() => {
     if (mode.kind !== "screen") return null;
-    const s = getSurface(mode.surfaceId);
-    return uvToWorld(0.5, 0.5, s); // world-space center of the monitor plane
+
+    // Query for screen surfaces dynamically
+    const screenSurfaces = getSurfacesByKind('screen');
+    if (screenSurfaces.length === 0) return null;
+
+    // Use the first screen surface found (typically the monitor)
+    const screenSurface = getSurface(screenSurfaces[0].id);
+    if (!screenSurface) return null;
+
+    return uvToWorld(0.5, 0.5, screenSurface); // world-space center of the monitor plane
   }, [mode]); //depends on mode
 
   /**
