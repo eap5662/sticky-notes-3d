@@ -2,24 +2,19 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
 import { useLayoutFrameState } from './useLayoutFrame';
-import { useSurface } from './useSurfaces';
 import { useGenericProps } from './useGenericProps';
 import {
   setGenericPropPosition,
   setGenericPropRotation,
   type GenericProp,
 } from '@/state/genericPropsStore';
-import { usePropBounds } from './usePropBounds';
 import type { PropBounds } from '@/state/propBoundsStore';
 import type { LayoutFrame } from '@/state/layoutFrameStore';
-import type { Surface } from '@/canvas/surfaces';
-import { useLayoutOverridesState } from './useLayoutOverrides';
 
 const EPSILON = 1e-4;
 
 type DockConstraintContext = {
   frame: LayoutFrame;
-  deskSurface: Surface | null;
   deskYawRad: number;
 };
 
@@ -50,7 +45,7 @@ function solveDockPlacementForProp(
     return null;
   }
 
-  const { frame, deskSurface } = context;
+  const { frame } = context;
 
   const up = [frame.up[0], frame.up[1], frame.up[2]] as const;
   const right = [frame.right[0], frame.right[1], frame.right[2]] as const;
@@ -80,9 +75,12 @@ function solveDockPlacementForProp(
 
 export function useDockConstraints() {
   const layoutFrame = useLayoutFrameState();
-  const deskSurface = useSurface('desk');
+
   const genericProps = useGenericProps();
-  const overrides = useLayoutOverridesState();
+
+  // Find desk prop to get its actual rotation
+  const deskProp = genericProps.find(p => p.catalogId === 'desk-default');
+  const deskYawRad = deskProp?.rotation[1] ?? 0;
 
   const prevFrameRef = useRef<LayoutFrame | null>(null);
   const prevDeskYawRef = useRef<number>(0);
@@ -100,7 +98,6 @@ export function useDockConstraints() {
     }
 
     const frame = layoutFrame.frame;
-    const deskYawRad = THREE.MathUtils.degToRad(overrides.deskYawDeg);
 
     // Check if frame or desk yaw actually changed (avoid thrashing)
     if (prevFrameRef.current && prevDeskYawRef.current === deskYawRad) {
@@ -126,7 +123,6 @@ export function useDockConstraints() {
 
     const context: DockConstraintContext = {
       frame,
-      deskSurface,
       deskYawRad,
     };
 
@@ -141,5 +137,5 @@ export function useDockConstraints() {
         setGenericPropRotation(prop.id, placement.rotation);
       }
     });
-  }, [layoutFrame.frame, deskSurface, overrides.deskYawDeg]);
+  }, [layoutFrame.frame, deskYawRad]);
 }

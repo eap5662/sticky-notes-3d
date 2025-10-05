@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import type { SurfaceId } from '@/canvas/surfaces';
-import { useSurface, useSurfaceMeta } from './useSurfaces';
+import { createSurfaceId, type SurfaceId } from '@/canvas/surfaces';
+import { useSurface, useSurfaceMeta, useSurfacesByKind } from './useSurfaces';
 import { usePropBounds } from './usePropBounds';
 import type { PropBounds } from '@/state/propBoundsStore';
 import { useLayoutFrame } from './useLayoutFrame';
@@ -87,10 +87,15 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
     enabled = true,
   } = options;
 
-  const deskSurface = useSurface('desk');
-  const monitorSurface = useSurface('monitor1');
-  const deskMeta = useSurfaceMeta('desk');
-  const monitorMeta = useSurfaceMeta('monitor1');
+  // Query desk by kind (reactively subscribes to surface changes)
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskSurfaceId = deskSurfaces[0]?.id;
+  const deskSurface = useSurface(deskSurfaceId ?? '');
+  const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
+
+  // TODO: Update this when monitor1 is migrated (Phase 2 of cleanup)
+  const monitorSurface = useSurface(createSurfaceId('monitor1'));
+  const monitorMeta = useSurfaceMeta(createSurfaceId('monitor1'));
   const monitorBounds = usePropBounds('monitor1');
   const layoutFrame = useLayoutFrame();
 
@@ -109,7 +114,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
         next.push({
           id: 'desk-surface-origin-mismatch',
           severity: 'warn',
-          surfaceId: 'desk',
+          surfaceId: deskSurfaceId,
           message: `Desk surface origin differs from GLTF-derived top by ${(delta * 1000).toFixed(1)} mm`,
           value: delta,
         });
@@ -137,7 +142,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
         next.push({
           id: 'monitor-below-desk',
           severity: 'error',
-          surfaceId: 'monitor1',
+          surfaceId: createSurfaceId('monitor1'),
           message: `Monitor base penetrates desk by ${((monitorClearance - separation) * 1000).toFixed(1)} mm`,
           value: separation,
         });
@@ -160,7 +165,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
           next.push({
             id: 'monitor-face-misalignment',
             severity: 'error',
-            surfaceId: 'monitor1',
+            surfaceId: createSurfaceId('monitor1'),
             message: `Monitor facing deviates ${angleDeg.toFixed(2)} deg from desk forward (${monitorFaceToleranceDeg} deg max).`,
             value: angleDeg,
           });
@@ -183,7 +188,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
         next.push({
           id: 'monitor-lateral-overflow',
           severity: 'warn',
-          surfaceId: 'monitor1',
+          surfaceId: createSurfaceId('monitor1'),
           message: `Monitor extends  mm past desk lateral bounds (margin  mm).`,
           value: Math.abs(overflow),
         });
@@ -199,7 +204,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
         next.push({
           id: 'monitor-depth-overflow',
           severity: 'warn',
-          surfaceId: 'monitor1',
+          surfaceId: createSurfaceId('monitor1'),
           message: `Monitor extends  mm past desk depth bounds (margin  mm).`,
           value: Math.abs(overflow),
         });

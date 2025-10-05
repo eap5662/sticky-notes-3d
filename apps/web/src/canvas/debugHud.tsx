@@ -7,8 +7,9 @@
  */
 import { useState } from 'react';
 import { useCamera } from '@/state/cameraSlice';
-import { useSurface, useSurfaceMeta } from '@/canvas/hooks/useSurfaces';
+import { useSurface, useSurfaceMeta, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { useLayoutFrameState } from '@/canvas/hooks/useLayoutFrame';
+import { createSurfaceId } from '@/canvas/surfaces';
 
 function radToDeg(r: number) {
   return (r * 180) / Math.PI;
@@ -27,11 +28,15 @@ export default function DebugHud() {
   const pitch = useCamera((s) => s.pitch);
   const dolly = useCamera((s) => s.dolly);
 
-  const deskMeta = useSurfaceMeta('desk');
-  const monitorMeta = useSurfaceMeta('monitor1');
+  // Query desk by kind (reactively subscribes to surface changes)
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskSurfaceId = deskSurfaces[0]?.id;
+  const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
+  const deskSurface = useSurface(deskSurfaceId ?? '');
 
-  const deskSurface = useSurface('desk');
-  const monitorSurface = useSurface('monitor1');
+  // TODO: Update when monitor1 is migrated (Phase 2)
+  const monitorMeta = useSurfaceMeta(createSurfaceId('monitor1'));
+  const monitorSurface = useSurface(createSurfaceId('monitor1'));
 
   const layout = useLayoutFrameState();
 
@@ -79,9 +84,6 @@ export default function DebugHud() {
             </div>
             <div>
               target: <span className="font-semibold">{formatVec3(layout.cameraTarget)}</span>
-            </div>
-            <div>
-              monitor pos: <span className="font-semibold">{formatVec3(layout.monitorPlacement?.position ?? null)}</span>
             </div>
           </div>
 

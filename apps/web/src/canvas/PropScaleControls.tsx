@@ -85,10 +85,16 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
   }, [target.scale, targetKey]);
 
   const prevGenericStatusRef = useRef<'editing' | 'dragging' | 'placed' | null>(null);
+  const prevGenericIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!genericTarget) {
+      // If we had a generic selected and now it's gone (deselected), close the panel
+      if (prevGenericIdRef.current !== null) {
+        setIsOpen(false);
+      }
       prevGenericStatusRef.current = null;
+      prevGenericIdRef.current = null;
       return;
     }
 
@@ -101,6 +107,7 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     }
 
     prevGenericStatusRef.current = genericTarget.status;
+    prevGenericIdRef.current = genericTarget.id;
   }, [genericTarget]);
 
   const handleScaleChange = useCallback(

@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useCallback, useEffect, useRef } from "react";
+import { Suspense, useCallback, useEffect, useRef, useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -8,33 +8,95 @@ import DeskViewController from "@/canvas/Cameras/DeskViewController";
 import ScreenViewController from "@/canvas/Cameras/ScreenViewController";
 import { Surfaces } from "@/canvas/surfaceRendering";
 import DebugHud from "@/canvas/debugHud";
-import { useSurface } from "@/canvas/hooks/useSurfaces";
+import { useSurface, useSurfacesByKind } from "@/canvas/hooks/useSurfaces";
 import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayoutValidation";
-import { DeskProp } from "@/canvas/props/DeskProp";
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
 import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
-import { usePropScale } from "@/canvas/hooks/usePropScale";
 import LayoutControls from "@/canvas/LayoutControls";
 import PropScaleControls from "@/canvas/PropScaleControls";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
 import GenericPropControls from "@/canvas/GenericPropControls";
 import GenericPropScaleBanner from "@/canvas/GenericPropScaleBanner";
 import { clearSelection } from "@/state/selectionStore";
+import { undockProp, spawnGenericProp } from "@/state/genericPropsStore";
+import { PROP_CATALOG } from "@/data/propCatalog";
+import { useGenericProps } from "@/canvas/hooks/useGenericProps";
 
 export default function SceneRoot() {
   const mode = useCamera((s) => s.mode);
   const setMode = useCamera((s) => s.setMode);
 
-  const deskSurface = useSurface("desk");
+  const genericProps = useGenericProps();
+  const deskSurfaces = useSurfacesByKind('desk');
 
   const layoutState = useAutoLayout();
+  const hasDesk = !!layoutState.frame;
+
   useDockConstraints();
   const overrides = useLayoutOverridesState();
-  const deskYawRad = THREE.MathUtils.degToRad(overrides.deskYawDeg);
-  const deskRotation: [number, number, number] = [0, deskYawRad, 0];
 
-  const deskScale = usePropScale("desk");
+  // Auto-spawn desk on first mount if none exists
+  const hasSpawnedDeskRef = useRef(false);
+  useEffect(() => {
+    if (hasSpawnedDeskRef.current) return;
+
+    const existingDesk = genericProps.find(p => p.catalogId === 'desk-default');
+    if (existingDesk) {
+      hasSpawnedDeskRef.current = true;
+      return;
+    }
+
+    const deskEntry = PROP_CATALOG.find(entry => entry.id === 'desk-default');
+    if (!deskEntry) return;
+
+    spawnGenericProp({
+      catalogId: deskEntry.id,
+      label: deskEntry.label,
+      url: deskEntry.url,
+      anchor: deskEntry.anchor,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+    });
+    hasSpawnedDeskRef.current = true;
+  }, [genericProps]);
+
+  // Get desk prop for tracking deletion
+  const deskProp = useMemo(() => {
+    return genericProps.find(p => p.catalogId === 'desk-default');
+  }, [genericProps]);
+
+  // Auto-undock all props when desk is deleted
+  const prevDeskIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const currentDeskId = deskProp?.id ?? null;
+
+    // Desk was removed
+    if (prevDeskIdRef.current && !currentDeskId) {
+      genericProps.forEach(prop => {
+        if (prop.docked) {
+          undockProp(prop.id);
+        }
+      });
+    }
+
+    prevDeskIdRef.current = currentDeskId;
+  }, [deskProp, genericProps]);
+
+  // Handler to spawn desk (from banner button)
+  const handleSpawnDesk = useCallback(() => {
+    const deskEntry = PROP_CATALOG.find(entry => entry.id === 'desk-default');
+    if (!deskEntry) return;
+
+    spawnGenericProp({
+      catalogId: deskEntry.id,
+      label: deskEntry.label,
+      url: deskEntry.url,
+      anchor: deskEntry.anchor,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+    });
+  }, []);
 
   const handleLayoutWarnings = useCallback((warnings: LayoutWarning[]) => {
     warnings.forEach((warning) => {
@@ -70,7 +132,7 @@ export default function SceneRoot() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setMode]);
 
-  const surfacesReady = !!deskSurface;
+  const isLoading = layoutState.status === 'pending';
 
   return (
     <div className="relative h-[70vh] min-h-[540px]">
@@ -102,8 +164,7 @@ export default function SceneRoot() {
         onPointerMissed={() => clearSelection()}
       >
         <Suspense fallback={null}>
-          <DeskProp url="/models/DeskTopPlane.glb" rotation={deskRotation} scale={deskScale} />
-
+          {/* Desk now rendered via GenericPropsLayer (auto-spawned on mount) */}
           <GenericPropsLayer />
           <Surfaces />
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
@@ -112,9 +173,29 @@ export default function SceneRoot() {
 
       <GenericPropScaleBanner />
 
-      {!surfacesReady && (
+      {/* No desk banner (Frozen World) */}
+      {!hasDesk && !isLoading && (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-30 text-center">
+          <div className="rounded-lg bg-black/90 px-8 py-6 text-white shadow-2xl border border-white/10">
+            <div className="text-xl font-semibold">No Workspace Active</div>
+            <div className="mt-2 text-sm text-white/70 max-w-xs">
+              Add a desk to activate props and enable interactions
+            </div>
+            <button
+              type="button"
+              className="mt-4 rounded-full bg-teal-500 px-6 py-2.5 text-sm font-semibold hover:bg-teal-400 transition-colors"
+              onClick={handleSpawnDesk}
+            >
+              Add Desk
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading indicator */}
+      {isLoading && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md bg-black/60 px-4 py-2 text-sm text-white">
-          Loading desk surface...
+          Loading workspace...
         </div>
       )}
     </div>

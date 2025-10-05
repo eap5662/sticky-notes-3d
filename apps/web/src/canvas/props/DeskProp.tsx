@@ -1,3 +1,4 @@
+import { createSurfaceId } from '@/canvas/surfaces';
 import GLTFProp from './GLTFProp';
 
 type DeskPropProps = {
@@ -16,7 +17,7 @@ export function DeskProp({ url, position, rotation, scale }: DeskPropProps) {
       scale={scale}
       anchor={{ type: 'bbox', align: { x: 'center', y: 'max', z: 'center' } }}
       propId="desk"
-      registerSurfaces={[{ id: 'desk', kind: 'desk', nodeName: 'DeskTopPlane', options: { normalSide: 'positive' } }]}
+      registerSurfaces={[{ id: createSurfaceId('desk'), kind: 'desk', nodeName: 'DeskTopPlane', options: { normalSide: 'positive' } }]}
     />
   );
 }

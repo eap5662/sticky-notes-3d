@@ -21,7 +21,7 @@ import { useCamera, clampPose } from "@/state/cameraSlice";
 import { getSurface } from "@/canvas/surfaces";
 import { uvToWorld } from "@/canvas/math/plane";
 import { isCameraOrbitLocked, subscribeCameraOrbit } from "@/state/cameraInteractionStore";
-import { getSurfacesByKind } from "@/state/surfaceMetaStore";
+import { useSurfacesByKind } from "@/canvas/hooks/useSurfaces";
 
 /**
  * Sensitivity constants for *screen* mode.
@@ -55,21 +55,19 @@ export default function ScreenViewController() {
    * Desk used a fixed target (DESK_TARGET). Here the target is dynamic:
    *   - We query for screen surfaces by kind (supports any spawned monitor).
    *   - We convert (u=0.5, v=0.5) to world coordinates for the *center of the screen*.
-   *   - useMemo caches the result until screen surfaces change.
+   *   - Reactively subscribes to surface changes.
    */
+  const screenSurfaces = useSurfacesByKind('screen');
   const target = useMemo(() => {
     if (mode.kind !== "screen") return null;
 
-    // Query for screen surfaces dynamically
-    const screenSurfaces = getSurfacesByKind('screen');
-    if (screenSurfaces.length === 0) return null;
-
     // Use the first screen surface found (typically the monitor)
+    if (screenSurfaces.length === 0) return null;
     const screenSurface = getSurface(screenSurfaces[0].id);
     if (!screenSurface) return null;
 
     return uvToWorld(0.5, 0.5, screenSurface); // world-space center of the monitor plane
-  }, [mode]); //depends on mode
+  }, [mode, screenSurfaces]); // depends on mode and screen surfaces
 
   /**
    * EFFECT 1: Apply (yaw, pitch, dolly) to the camera, looking at the dynamic target.
@@ -98,7 +96,7 @@ export default function ScreenViewController() {
   const lastY = useRef(0);
 
   useEffect(() => {
-    if (mode.kind !== "screen") return;
+    if (mode.kind !== "screen") return undefined;
 
     const unsubscribe = subscribeCameraOrbit(() => {
       if (isCameraOrbitLocked()) {
@@ -106,7 +104,9 @@ export default function ScreenViewController() {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+    };
   }, [mode]);
 
   /**
@@ -114,7 +114,7 @@ export default function ScreenViewController() {
    * dY"? VS Desk: Same listener pattern, smaller DOLLY_STEP for finer control.
    */
   useEffect(() => {
-    if (mode.kind !== "screen") return;
+    if (mode.kind !== "screen") return undefined;
     const el = gl.domElement;
 
     function onWheel(e: WheelEvent) {
@@ -133,7 +133,7 @@ export default function ScreenViewController() {
    *   but ORBIT_SPEED is reduced for tighter control in close-up view.
    */
   useEffect(() => {
-    if (mode.kind !== "screen") return;
+    if (mode.kind !== "screen") return undefined;
 
     const el = gl.domElement;
 
@@ -188,7 +188,7 @@ export default function ScreenViewController() {
    * against any external changes that might bypass actions.
    */
   useEffect(() => {
-    if (mode.kind !== "screen") return;
+    if (mode.kind !== "screen") return undefined;
     if (!target) return;
 
     const clamped = clampPose(mode, yaw, pitch, dolly);

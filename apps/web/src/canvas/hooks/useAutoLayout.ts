@@ -1,10 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import { CAMERA_CLAMPS, useCamera } from "@/state/cameraSlice";
 import type { SurfaceMeta } from "@/state/surfaceMetaStore";
 import type { PropBounds } from "@/state/propBoundsStore";
-import { useSurfaceMeta } from "./useSurfaces";
+import { useSurfaceMeta, useSurfacesByKind } from "./useSurfaces";
 import { usePropBounds } from "./usePropBounds";
 import {
   setLayoutState,
@@ -13,6 +13,7 @@ import {
 } from "@/state/layoutFrameStore";
 import { useLayoutFrameState } from "./useLayoutFrame";
 import { getGenericPropsSnapshot } from "@/state/genericPropsStore";
+import { useGenericProps } from "./useGenericProps";
 
 const DEFAULT_CAMERA_FOV_DEG = 48;
 const CAMERA_RADIUS_MARGIN = 1.12;
@@ -160,8 +161,18 @@ function posesApproximatelyEqual(a: LayoutPose, b: LayoutPose, eps = 1e-3) {
 }
 
 export function useAutoLayout() {
-  const deskMeta = useSurfaceMeta("desk");
-  const deskBounds = usePropBounds("desk");
+  const genericProps = useGenericProps();
+
+  // Find desk by querying generic props for desk catalog ID
+  const deskProp = useMemo(() => {
+    return genericProps.find(p => p.catalogId === 'desk-default');
+  }, [genericProps]);
+
+  // Get desk surface by kind (reactively subscribes to surface changes)
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskSurfaceId = deskSurfaces[0]?.id;
+  const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
+  const deskBounds = deskProp?.bounds ?? null;
 
   useEffect(() => {
     if (!deskMeta || !deskBounds) {

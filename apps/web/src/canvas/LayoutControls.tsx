@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
-import { rotateDesk, resetLayoutOverrides } from "@/state/layoutOverridesStore";
+import { resetLayoutOverrides } from "@/state/layoutOverridesStore";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
 import { useSelection } from "@/canvas/hooks/useSelection";
-import { useGenericProp } from "@/canvas/hooks/useGenericProps";
+import { useGenericProp, useGenericProps } from "@/canvas/hooks/useGenericProps";
 import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undockProp } from "@/state/genericPropsStore";
 import { useLayoutFrameState } from "@/canvas/hooks/useLayoutFrame";
 
@@ -119,32 +119,33 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
   const selectedGeneric = useGenericProp(selectedGenericId);
 
+  // Find desk prop (now in generic props store)
+  const genericProps = useGenericProps();
+  const deskProp = genericProps.find(p => p.catalogId === 'desk-default');
+
+  // Rotation target: selected prop if any, otherwise desk
   const rotationTarget = selectedGeneric
     ? { type: 'generic' as const, id: selectedGeneric.id, label: selectedGeneric.label ?? 'Prop' }
-    : { type: 'desk' as const };
+    : deskProp
+    ? { type: 'generic' as const, id: deskProp.id, label: 'Desk' }
+    : null;
 
-  const currentRotationDeg = rotationTarget.type === 'generic'
+  const currentRotationDeg = rotationTarget
     ? getGenericPropRotationDeg(rotationTarget.id)
-    : overrides.deskYawDeg;
+    : 0;
 
   const handleRotateLeft = useCallback(() => {
-    if (rotationTarget.type === 'generic') {
-      rotateGenericProp(rotationTarget.id, -ROTATE_STEP_DEG);
-    } else {
-      rotateDesk(-ROTATE_STEP_DEG);
-    }
+    if (!rotationTarget) return;
+    rotateGenericProp(rotationTarget.id, -ROTATE_STEP_DEG);
   }, [rotationTarget]);
 
   const handleRotateRight = useCallback(() => {
-    if (rotationTarget.type === 'generic') {
-      rotateGenericProp(rotationTarget.id, ROTATE_STEP_DEG);
-    } else {
-      rotateDesk(ROTATE_STEP_DEG);
-    }
+    if (!rotationTarget) return;
+    rotateGenericProp(rotationTarget.id, ROTATE_STEP_DEG);
   }, [rotationTarget]);
 
   const handleDock = useCallback(() => {
-    if (!selectedGeneric || !layoutFrame.frame) return;
+    if (!selectedGeneric || !layoutFrame.frame || !deskProp) return;
 
     // Calculate dock offset from current world position
     const frame = layoutFrame.frame;
@@ -168,8 +169,8 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
     const depth = relativePos[0] * forward[0] + relativePos[1] * forward[1] + relativePos[2] * forward[2];
     const lift = relativePos[0] * up[0] + relativePos[1] * up[1] + relativePos[2] * up[2];
 
-    // Get desk's current yaw from overrides (actual rotation)
-    const deskYawRad = (overrides.deskYawDeg * Math.PI) / 180;
+    // Get desk's current yaw from desk prop (now in genericPropsStore)
+    const deskYawRad = deskProp.rotation[1];
 
     // Store yaw relative to desk (subtract desk yaw from prop yaw)
     const propWorldYaw = rot[1];
@@ -181,7 +182,7 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
       lift,
       yaw: propDeskRelativeYaw, // Desk-relative rotation
     });
-  }, [selectedGeneric, layoutFrame.frame, overrides.deskYawDeg]);
+  }, [selectedGeneric, layoutFrame.frame, deskProp]);
 
   const handleUndock = useCallback(() => {
     if (!selectedGeneric) return;
@@ -202,11 +203,11 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
         {isOpen ? "Hide Layout" : "Show Layout"}
       </button>
 
-      {isOpen && (
+      {isOpen && rotationTarget && (
         <div className="pointer-events-auto w-64 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
           <div>
             <div className="font-semibold">
-              {rotationTarget.type === 'generic' ? `${rotationTarget.label} Rotation` : 'Desk Rotation'}
+              {rotationTarget.label} Rotation
             </div>
             <div className="mt-2 flex gap-2">
               <HoldButton

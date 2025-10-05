@@ -11,12 +11,13 @@ import {
   type GenericProp,
 } from '@/state/genericPropsStore';
 import { clearSelection, setSelection } from '@/state/selectionStore';
-import { useSurface } from '@/canvas/hooks/useSurfaces';
+import { useSurface, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { planeProject } from '@/canvas/math/plane';
 import { lockCameraOrbit, unlockCameraOrbit } from '@/state/cameraInteractionStore';
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { PROP_CATALOG } from '@/data/propCatalog';
 import { setSurfaceMeta } from '@/state/surfaceMetaStore';
+import { useLayoutFrame } from '@/canvas/hooks/useLayoutFrame';
 
 const DEFAULT_ANCHOR = { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } } as const;
 
@@ -26,6 +27,8 @@ const TMP_POINT = new THREE.Vector3();
 const TMP_RAY = new THREE.Ray();
 
 const HIGHLIGHT_COLOR = '#5eead4';
+
+const toVec3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 const HIGHLIGHT_MINOR_RADIUS_SCALE = 0.55;
 const HIGHLIGHT_MAJOR_RADIUS_SCALE = 1.1;
 const DESK_CLEARANCE = 0.015;
@@ -36,7 +39,15 @@ type GenericPropInstanceProps = {
 };
 
 export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
-  const deskSurface = useSurface('desk');
+  // Query desk surface by kind (reactively subscribes to surface changes)
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskSurfaceId = deskSurfaces[0]?.id;
+  const deskSurface = useSurface(deskSurfaceId ?? '');
+
+  const layoutFrame = useLayoutFrame();
+  const isActive = !!layoutFrame; // Active when desk exists
+  const canDrag = isActive && !!deskSurface && !prop.docked;
+
   const selection = useSelection();
   const isSelected = selection?.kind === 'generic' && selection.id === prop.id;
 
@@ -44,6 +55,8 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const pointerIdRef = useRef<number | null>(null);
   const grabOffsetRef = useRef(new THREE.Vector3());
   const initialBoundsOffsetRef = useRef<number | null>(null);
+  const hasAdjustedHeightRef = useRef(false);
+  const prevDeskHeightRef = useRef<number | null>(null);
 
   // Get surface config from catalog
   const catalogEntry = useMemo(() => {
@@ -53,14 +66,18 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const surfaceRegistrations = useMemo(() => {
     if (!catalogEntry?.surfaces) return undefined;
     return catalogEntry.surfaces.map(surf => ({
-      id: surf.id as any,
-      kind: surf.kind as any,
+      id: surf.id,
+      kind: surf.kind,
       nodeName: surf.nodeName,
       options: surf.options,
-      onExtract: (info: any) => {
+      onExtract: (info: ReturnType<typeof import('./surfaceAdapter').extractSurfaceFromNode>['debug']) => {
         // Store surface metadata with kind
-        setSurfaceMeta(surf.id as any, {
-          ...info.meta,
+        setSurfaceMeta(surf.id, {
+          center: toVec3(info.center),
+          normal: toVec3(info.normal),
+          uDir: toVec3(info.uDir),
+          vDir: toVec3(info.vDir),
+          extents: info.extents,
           kind: surf.kind,
         });
       },
@@ -130,8 +147,8 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       event.nativeEvent.stopImmediatePropagation?.();
       setSelection({ kind: 'generic', id: prop.id });
 
-      // Docked props cannot be dragged
-      if (prop.docked) {
+      // Cannot drag if no desk or if docked
+      if (!canDrag) {
         requestAnimationFrame(() => {
           unlockCameraOrbit();
         });
@@ -161,9 +178,11 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       pointerIdRef.current = event.pointerId;
       grabOffsetRef.current.set(prop.position[0], prop.position[1], prop.position[2]).sub(intersection);
 
-      event.target.setPointerCapture?.(event.pointerId);
+      if (event.target && 'setPointerCapture' in event.target) {
+        (event.target as Element).setPointerCapture(event.pointerId);
+      }
     },
-    [computeIntersection, prop.id, prop.position, prop.status, prop.docked],
+    [computeIntersection, prop.id, prop.position, prop.status, canDrag],
   );
 
   const finishDrag = useCallback((event: ThreeEvent<PointerEvent>) => {
@@ -179,7 +198,9 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     dragActiveRef.current = false;
     pointerIdRef.current = null;
 
-    event.target.releasePointerCapture?.(event.pointerId);
+    if (event.target && 'releasePointerCapture' in event.target) {
+      (event.target as Element).releasePointerCapture(event.pointerId);
+    }
     unlockCameraOrbit();
   }, []);
 
@@ -230,11 +251,27 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     return () => window.removeEventListener('keydown', handleKey);
   }, [isSelected, prop.status, prop.id]);
 
+  // Reset height adjustment flag when desk height changes (e.g., desk scaled)
   useEffect(() => {
+    if (deskHeight !== null && prevDeskHeightRef.current !== null) {
+      if (Math.abs(deskHeight - prevDeskHeightRef.current) > CLEARANCE_EPSILON) {
+        hasAdjustedHeightRef.current = false;
+      }
+    }
+    prevDeskHeightRef.current = deskHeight;
+  }, [deskHeight]);
+
+  useEffect(() => {
+    // Don't auto-adjust desk height - only adjust props ON the desk
+    if (prop.catalogId === 'desk-default') return;
+
     if (deskHeight == null) return;
     if (!prop.bounds) return;
     if (!isOverDesk) return;
     if (prop.status === 'dragging' && dragActiveRef.current) return;
+
+    // Only adjust once when bounds first become available
+    if (hasAdjustedHeightRef.current) return;
 
     // Capture the initial bounds offset (local-space foot position) on first bounds arrival
     if (initialBoundsOffsetRef.current === null) {
@@ -248,8 +285,12 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     // Only adjust if the error is significant
     if (Math.abs(prop.position[1] - targetY) > CLEARANCE_EPSILON) {
       setGenericPropPosition(prop.id, [prop.position[0], targetY, prop.position[2]]);
+      hasAdjustedHeightRef.current = true;
     }
-  }, [deskHeight, isOverDesk, prop.bounds, prop.id, prop.position, prop.status]);
+    // Note: prop.position and prop.bounds intentionally NOT in deps to avoid infinite loop
+    // This effect runs once when conditions are met, then hasAdjustedHeightRef prevents re-runs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deskHeight, isOverDesk, prop.id, prop.status, prop.catalogId]);
 
   const highlightData = useMemo(() => {
     if (!prop.bounds) {
@@ -292,7 +333,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
           onPointerLeave: finishDrag,
         }}
       />
-      {isSelected && (
+      {isSelected && isActive && (
         <mesh position={highlightData.center} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
           <ringGeometry args={[highlightData.minorRadius, highlightData.majorRadius, 48]} />
           <meshBasicMaterial color={HIGHLIGHT_COLOR} transparent opacity={0.4} />

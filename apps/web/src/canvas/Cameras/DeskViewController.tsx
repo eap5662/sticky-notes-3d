@@ -42,7 +42,7 @@ export default function DeskViewController() {
   const target = layoutTarget ?? FALLBACK_DESK_TARGET;
 
   useEffect(() => {
-    if (mode.kind !== "desk") return;
+    if (mode.kind !== "desk") return undefined;
 
     const [tx, ty, tz] = target;
 
@@ -59,7 +59,7 @@ export default function DeskViewController() {
   const lastY = useRef(0);
 
   useEffect(() => {
-    if (mode.kind !== "desk") return;
+    if (mode.kind !== "desk") return undefined;
 
     const unsubscribe = subscribeCameraOrbit(() => {
       if (isCameraOrbitLocked()) {
@@ -67,11 +67,13 @@ export default function DeskViewController() {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+    };
   }, [mode]);
 
   useEffect(() => {
-    if (mode.kind !== "desk") return;
+    if (mode.kind !== "desk") return undefined;
 
     const el = gl.domElement;
 
@@ -86,7 +88,7 @@ export default function DeskViewController() {
   }, [gl, mode, dollyBy]);
 
   useEffect(() => {
-    if (mode.kind !== "desk") return;
+    if (mode.kind !== "desk") return undefined;
 
     const el = gl.domElement;
 
@@ -135,7 +137,7 @@ export default function DeskViewController() {
   }, [gl, mode, orbitBy]);
 
   useEffect(() => {
-    if (mode.kind !== "desk") return;
+    if (mode.kind !== "desk") return undefined;
     const clamped = clampPose(mode, yaw, pitch, dolly);
     if (clamped.yaw !== yaw || clamped.pitch !== pitch || clamped.dolly !== dolly) {
       orbitBy(clamped.yaw - yaw, clamped.pitch - pitch);

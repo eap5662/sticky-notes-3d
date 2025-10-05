@@ -1,10 +1,11 @@
 import type { AnchorConfig } from '@/canvas/props/GLTFProp';
 import type { SurfaceExtractOptions } from '@/canvas/props/surfaceAdapter';
+import { createSurfaceId, type SurfaceId } from '@/canvas/surfaces';
 
 export type SurfaceKind = 'desk' | 'screen' | 'monitor-arm' | 'wall';
 
 export type PropSurfaceConfig = {
-  id: string;
+  id: SurfaceId;
   kind: SurfaceKind;
   nodeName: string;
   options?: SurfaceExtractOptions;
@@ -20,6 +21,20 @@ export type PropCatalogEntry = {
 
 export const PROP_CATALOG: PropCatalogEntry[] = [
   {
+    id: 'desk-default',
+    label: 'Desk',
+    url: '/models/DeskTopPlane.glb',
+    anchor: { type: 'bbox', align: { x: 'center', y: 'max', z: 'center' } },
+    surfaces: [
+      {
+        id: createSurfaceId('desk-surface'),
+        kind: 'desk',
+        nodeName: 'DeskTopPlane',
+        options: { normalSide: 'positive' },
+      },
+    ],
+  },
+  {
     id: 'lamp-basic',
     label: 'Desk Lamp',
     url: '/models/lamp.glb',
@@ -32,7 +47,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     surfaces: [
       {
-        id: 'monitor-basic-screen',
+        id: createSurfaceId('monitor-basic-screen'),
         kind: 'screen',
         nodeName: 'ScreenPlane',
         options: { normalSide: 'positive' },

@@ -35,7 +35,7 @@ type BoundingBoxAnchor = {
 
 export type AnchorConfig = VectorAnchor | BoundingBoxAnchor;
 
-type GroupProps = JSX.IntrinsicElements['group'];
+type GroupProps = React.ComponentProps<'group'>;
 
 type Props = {
   url: string;
