@@ -114,7 +114,7 @@ export function spawnGenericProp(blueprint: GenericPropBlueprint): GenericProp {
     position: normalized.position,
     rotation: normalized.rotation,
     scale: cloneVec(DEFAULT_SCALE),
-    status: 'editing',
+    status: 'dragging',
     docked: false,
     dockOffset: undefined,
   };

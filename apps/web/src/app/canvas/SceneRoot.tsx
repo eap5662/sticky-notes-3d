@@ -17,7 +17,6 @@ import LayoutControls from "@/canvas/LayoutControls";
 import PropScaleControls from "@/canvas/PropScaleControls";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
 import GenericPropControls from "@/canvas/GenericPropControls";
-import GenericPropScaleBanner from "@/canvas/GenericPropScaleBanner";
 import { clearSelection } from "@/state/selectionStore";
 import { undockProp, spawnGenericProp } from "@/state/genericPropsStore";
 import { PROP_CATALOG } from "@/data/propCatalog";
@@ -170,8 +169,6 @@ export default function SceneRoot() {
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
         </Suspense>
       </Canvas>
-
-      <GenericPropScaleBanner />
 
       {/* No desk banner (Frozen World) */}
       {!hasDesk && !isLoading && (

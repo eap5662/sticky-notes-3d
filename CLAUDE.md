@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 RECENT MAJOR CHANGES (January 2025)
+
+**Migration to Generic Props System - IN PROGRESS**
+
+The codebase recently underwent a major refactor migrating from hardcoded desk/monitor props to a unified **Generic Props** system. See `SPRINT_SUMMARY.md` for full details.
+
+**Key Changes:**
+- ✅ **Desk is now a generic prop** - Spawns from `PROP_CATALOG`, managed by `genericPropsStore`
+- ✅ **Dynamic surface lookups** - Use `useSurfacesByKind('desk')` instead of `useSurface('desk')`
+- ✅ **Docking system** - Props can lock to desk with relative offsets maintained through rotation
+- ✅ **Frozen world** - Scene functional without desk (props inactive, "No Workspace" banner)
+- ✅ **Auto-show/hide panels** - Edit panels appear on selection, disappear on deselection
+- ⚠️ **Phase 5 incomplete** - Desk scaling still uses old `propScaleStore` (needs migration)
+- ⚠️ **Phase 7 incomplete** - `PropId` type still includes 'desk' (cleanup needed)
+
+**New Files You Should Know:**
+- `apps/web/src/data/propCatalog.ts` - Prop catalog with surfaces config
+- `apps/web/src/state/genericPropsStore.ts` - Unified prop state (position, rotation, scale, docking)
+- `apps/web/src/canvas/GenericProp.tsx` - Generic prop rendering with auto-height adjustment
+- `apps/web/src/canvas/hooks/useDockConstraints.ts` - Docking system (props follow desk rotation)
+- `apps/web/src/canvas/hooks/useSurfacesByKind.ts` - Dynamic surface lookup by kind
+
+**Updated Architecture:**
+- All props (desk, monitor, lamp) use same state management
+- Props spawn from catalog, can be selected/scaled/rotated/docked/deleted
+- Desk can be deleted → "frozen world" state
+- Docked props cannot be edited (greyed out controls)
+
+**Read SPRINT_SUMMARY.md before making changes to prop system!**
+
+---
+
 ## Development Commands
 
 **Starting the development servers:**

@@ -1,8 +1,7 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { resetLayoutOverrides } from "@/state/layoutOverridesStore";
-import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
 import { useSelection } from "@/canvas/hooks/useSelection";
 import { useGenericProp, useGenericProps } from "@/canvas/hooks/useGenericProps";
 import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undockProp } from "@/state/genericPropsStore";
@@ -111,9 +110,7 @@ type LayoutControlsProps = {
 };
 
 export default function LayoutControls({ className = "" }: LayoutControlsProps = {}) {
-  const overrides = useLayoutOverridesState();
   const layoutFrame = useLayoutFrameState();
-  const [isOpen, setIsOpen] = useState(false);
 
   const selection = useSelection();
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
@@ -123,11 +120,9 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
   const genericProps = useGenericProps();
   const deskProp = genericProps.find(p => p.catalogId === 'desk-default');
 
-  // Rotation target: selected prop if any, otherwise desk
+  // Rotation target: selected prop only (no automatic fallback to desk)
   const rotationTarget = selectedGeneric
     ? { type: 'generic' as const, id: selectedGeneric.id, label: selectedGeneric.label ?? 'Prop' }
-    : deskProp
-    ? { type: 'generic' as const, id: deskProp.id, label: 'Desk' }
     : null;
 
   const currentRotationDeg = rotationTarget
@@ -193,33 +188,32 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
     .filter(Boolean)
     .join(" ");
 
+  if (!rotationTarget) return null;
+
+  const isDocked = selectedGeneric?.docked ?? false;
+  const isDesk = selectedGeneric?.catalogId === 'desk-default';
+  const buttonClass = isDocked
+    ? "flex-1 rounded border border-white/30 px-2 py-1 opacity-40 cursor-not-allowed"
+    : "flex-1 rounded border border-white/30 px-2 py-1 hover:bg-white/10";
+
   return (
     <div className={containerClass}>
-      <button
-        type="button"
-        className="pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"
-        onClick={() => setIsOpen((prev) => !prev)}
-      >
-        {isOpen ? "Hide Layout" : "Show Layout"}
-      </button>
-
-      {isOpen && rotationTarget && (
-        <div className="pointer-events-auto w-64 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
+      <div className="pointer-events-auto w-64 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
           <div>
             <div className="font-semibold">
               {rotationTarget.label} Rotation
             </div>
             <div className="mt-2 flex gap-2">
               <HoldButton
-                className="flex-1 rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={handleRotateLeft}
+                className={buttonClass}
+                onActivate={isDocked ? () => {} : handleRotateLeft}
                 holdIntervalMs={DESK_HOLD_INTERVAL_MS}
               >
                 Rotate Left
               </HoldButton>
               <HoldButton
-                className="flex-1 rounded border border-white/30 px-2 py-1 hover:bg-white/10"
-                onActivate={handleRotateRight}
+                className={buttonClass}
+                onActivate={isDocked ? () => {} : handleRotateRight}
                 holdIntervalMs={DESK_HOLD_INTERVAL_MS}
               >
                 Rotate Right
@@ -227,7 +221,12 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
             </div>
             <div className="mt-1 text-xs text-white/70">
               Yaw: {currentRotationDeg.toFixed(1)}&deg;
-              {selectedGeneric && selectedGeneric.docked && <span className="ml-2">(Docked)</span>}
+              {selectedGeneric && selectedGeneric.docked && (
+                <>
+                  <span className="ml-2">(Docked)</span>
+                  <span className="ml-2 text-teal-400">Undock to edit</span>
+                </>
+              )}
             </div>
           </div>
 
@@ -241,7 +240,7 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
                     className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
                     onClick={handleUndock}
                   >
-                    Undock from Desk
+                    {isDesk ? 'Unlock Desk' : 'Undock from Desk'}
                   </button>
                 ) : (
                   <button
@@ -249,7 +248,7 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
                     className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
                     onClick={handleDock}
                   >
-                    Dock to Desk
+                    {isDesk ? 'Lock Desk' : 'Dock to Desk'}
                   </button>
                 )}
               </div>
@@ -264,7 +263,6 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
             Reset Adjustments
           </button>
         </div>
-      )}
     </div>
   );
 }
