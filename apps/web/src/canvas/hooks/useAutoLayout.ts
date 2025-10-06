@@ -3,9 +3,8 @@ import * as THREE from "three";
 
 import { CAMERA_CLAMPS, useCamera } from "@/state/cameraSlice";
 import type { SurfaceMeta } from "@/state/surfaceMetaStore";
-import type { PropBounds } from "@/state/propBoundsStore";
+import type { GenericPropBounds } from "@/state/genericPropsStore";
 import { useSurfaceMeta, useSurfacesByKind } from "./useSurfaces";
-import { usePropBounds } from "./usePropBounds";
 import {
   setLayoutState,
   type LayoutFrame,
@@ -50,7 +49,7 @@ function collectCorners(box: THREE.Box3) {
   return corners;
 }
 
-function boundsToBox(bounds: PropBounds) {
+function boundsToBox(bounds: GenericPropBounds) {
   return new THREE.Box3(
     new THREE.Vector3(bounds.min[0], bounds.min[1], bounds.min[2]),
     new THREE.Vector3(bounds.max[0], bounds.max[1], bounds.max[2]),
@@ -70,7 +69,7 @@ function clampScalar(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function buildLayoutFrame(meta: SurfaceMeta, bounds: PropBounds): LayoutFrame {
+function buildLayoutFrame(meta: SurfaceMeta, bounds: GenericPropBounds): LayoutFrame {
   const up = toVec3(meta.normal).normalize();
   const right = toVec3(meta.uDir).normalize();
   const forward = new THREE.Vector3().crossVectors(right, up).normalize();
@@ -91,7 +90,7 @@ function buildLayoutFrame(meta: SurfaceMeta, bounds: PropBounds): LayoutFrame {
 
 function solveCamera(
   frame: LayoutFrame,
-  deskBounds: PropBounds,
+  deskBounds: GenericPropBounds,
 ): { target: [number, number, number]; pose: LayoutPose } {
   const forward = toVec3(frame.forward);
   const right = toVec3(frame.right);

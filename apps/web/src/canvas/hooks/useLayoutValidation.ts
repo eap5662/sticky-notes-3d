@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { createSurfaceId, type SurfaceId } from '@/canvas/surfaces';
+import { type SurfaceId } from '@/canvas/surfaces';
 import { useSurface, useSurfaceMeta, useSurfacesByKind } from './useSurfaces';
-import { usePropBounds } from './usePropBounds';
-import type { PropBounds } from '@/state/propBoundsStore';
+import { useGenericProps } from './useGenericProps';
+import type { GenericPropBounds } from '@/state/genericPropsStore';
 import { useLayoutFrame } from './useLayoutFrame';
 
 export type LayoutWarning = {
@@ -25,7 +25,7 @@ export type UseLayoutValidationOptions = {
 
 const toVec3 = (tuple: readonly number[]) => new THREE.Vector3(tuple[0], tuple[1], tuple[2]);
 
-function extremalPoint(bounds: PropBounds, normal: THREE.Vector3, pick: 'min' | 'max') {
+function extremalPoint(bounds: GenericPropBounds, normal: THREE.Vector3, pick: 'min' | 'max') {
   const choose = (axis: number, minVal: number, maxVal: number) => {
     const positive = axis >= 0;
     if (pick === 'min') {
@@ -41,7 +41,7 @@ function extremalPoint(bounds: PropBounds, normal: THREE.Vector3, pick: 'min' | 
   );
 }
 
-function spanAlongAxis(bounds: PropBounds, axis: THREE.Vector3) {
+function spanAlongAxis(bounds: GenericPropBounds, axis: THREE.Vector3) {
   const corners: THREE.Vector3[] = [];
   for (let x = 0; x <= 1; x++) {
     for (let y = 0; y <= 1; y++) {
@@ -93,10 +93,19 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
   const deskSurface = useSurface(deskSurfaceId ?? '');
   const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
 
-  // TODO: Update this when monitor1 is migrated (Phase 2 of cleanup)
-  const monitorSurface = useSurface(createSurfaceId('monitor1'));
-  const monitorMeta = useSurfaceMeta(createSurfaceId('monitor1'));
-  const monitorBounds = usePropBounds('monitor1');
+  // Query spawned monitors from generic props (supports multiple monitors)
+  const genericProps = useGenericProps();
+  const monitorProp = useMemo(() => {
+    return genericProps.find(p => p.catalogId === 'monitor-basic');
+  }, [genericProps]);
+
+  // Get monitor surface by querying screen surfaces
+  const screenSurfaces = useSurfacesByKind('screen');
+  const monitorSurfaceId = screenSurfaces[0]?.id;
+  const monitorSurface = useSurface(monitorSurfaceId ?? '');
+  const monitorMeta = useSurfaceMeta(monitorSurfaceId ?? '');
+  const monitorBounds = monitorProp?.bounds ?? null;
+
   const layoutFrame = useLayoutFrame();
 
   const warnings = useMemo<LayoutWarning[]>(() => {
@@ -142,36 +151,14 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
         next.push({
           id: 'monitor-below-desk',
           severity: 'error',
-          surfaceId: createSurfaceId('monitor1'),
+          surfaceId: monitorSurfaceId,
           message: `Monitor base penetrates desk by ${((monitorClearance - separation) * 1000).toFixed(1)} mm`,
           value: separation,
         });
       }
     }
 
-    if (layoutFrame && monitorMeta) {
-      const up = toVec3(layoutFrame.up).normalize();
-      const forward = toVec3(layoutFrame.forward).normalize();
-      const monitorNormal = toVec3(monitorMeta.normal).normalize();
-
-      const projectedMonitor = projectOntoPlane(monitorNormal, up);
-      const projectedForward = projectOntoPlane(forward, up);
-      if (projectedMonitor.lengthSq() > 1e-6 && projectedForward.lengthSq() > 1e-6) {
-        projectedMonitor.normalize();
-        projectedForward.normalize();
-        const angleRad = Math.abs(signedAngleAroundAxis(projectedMonitor, projectedForward, up));
-        const angleDeg = THREE.MathUtils.radToDeg(angleRad);
-        if (angleDeg > monitorFaceToleranceDeg) {
-          next.push({
-            id: 'monitor-face-misalignment',
-            severity: 'error',
-            surfaceId: createSurfaceId('monitor1'),
-            message: `Monitor facing deviates ${angleDeg.toFixed(2)} deg from desk forward (${monitorFaceToleranceDeg} deg max).`,
-            value: angleDeg,
-          });
-        }
-      }
-    }
+    // Monitor face alignment check removed - no longer needed with default rotation
 
     if (layoutFrame && monitorBounds) {
       const right = toVec3(layoutFrame.right).normalize();
@@ -188,7 +175,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
         next.push({
           id: 'monitor-lateral-overflow',
           severity: 'warn',
-          surfaceId: createSurfaceId('monitor1'),
+          surfaceId: monitorSurfaceId,
           message: `Monitor extends  mm past desk lateral bounds (margin  mm).`,
           value: Math.abs(overflow),
         });
@@ -204,7 +191,7 @@ export function useLayoutValidation(options: UseLayoutValidationOptions = {}) {
         next.push({
           id: 'monitor-depth-overflow',
           severity: 'warn',
-          surfaceId: createSurfaceId('monitor1'),
+          surfaceId: monitorSurfaceId,
           message: `Monitor extends  mm past desk depth bounds (margin  mm).`,
           value: Math.abs(overflow),
         });

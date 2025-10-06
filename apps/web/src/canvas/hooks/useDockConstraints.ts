@@ -7,8 +7,8 @@ import {
   setGenericPropPosition,
   setGenericPropRotation,
   type GenericProp,
+  type GenericPropBounds,
 } from '@/state/genericPropsStore';
-import type { PropBounds } from '@/state/propBoundsStore';
 import type { LayoutFrame } from '@/state/layoutFrameStore';
 
 const EPSILON = 1e-4;
@@ -38,7 +38,7 @@ function shouldUpdateProp(
 
 function solveDockPlacementForProp(
   prop: GenericProp,
-  propBounds: PropBounds | null,
+  propBounds: GenericPropBounds | null,
   context: DockConstraintContext
 ): { position: [number, number, number]; rotation: [number, number, number] } | null {
   if (!prop.docked || !prop.dockOffset) {

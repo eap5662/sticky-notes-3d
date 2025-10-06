@@ -1,5 +1,5 @@
 import type { Vec3 } from "@/canvas/surfaces";
-import type { PropBounds } from "@/state/propBoundsStore";
+import type { GenericPropBounds } from "@/state/genericPropsStore";
 
 export type LayoutStatus = "idle" | "pending" | "ready";
 
@@ -15,7 +15,7 @@ export type LayoutFrame = {
   right: Vec3;
   forward: Vec3;
   extents: { u: number; v: number; thickness: number };
-  bounds: PropBounds;
+  bounds: GenericPropBounds;
 };
 
 export type LayoutState = {
@@ -55,7 +55,7 @@ function extentsEqual(
   return a.u === b.u && a.v === b.v && a.thickness === b.thickness;
 }
 
-function boundsEqual(a: PropBounds | null, b: PropBounds | null) {
+function boundsEqual(a: GenericPropBounds | null, b: GenericPropBounds | null) {
   if (a === b) return true;
   if (!a || !b) return false;
   return vecEquals(a.min, b.min) && vecEquals(a.max, b.max);
@@ -88,7 +88,7 @@ function cloneVec3(vec: Vec3): Vec3 {
   return [vec[0], vec[1], vec[2]];
 }
 
-function cloneBounds(bounds: PropBounds): PropBounds {
+function cloneBounds(bounds: GenericPropBounds): GenericPropBounds {
   return {
     min: cloneVec3(bounds.min),
     max: cloneVec3(bounds.max),

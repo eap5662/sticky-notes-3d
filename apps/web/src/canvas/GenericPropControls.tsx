@@ -4,6 +4,7 @@ import { PROP_CATALOG } from '@/data/propCatalog';
 import { spawnGenericProp } from '@/state/genericPropsStore';
 import { setSelection } from '@/state/selectionStore';
 import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
+import { useGenericProps } from './hooks/useGenericProps';
 
 const PANEL_CLASS = 'pointer-events-auto w-56 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg';
 const BUTTON_CLASS = 'pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80';
@@ -11,6 +12,9 @@ const DESK_CLEARANCE = 0.015; // Same as GenericProp.tsx
 
 export default function GenericPropControls({ className = '' }: { className?: string } = {}) {
   const [isOpen, setIsOpen] = useState(false);
+
+  // Get all spawned props to check for duplicates
+  const genericProps = useGenericProps();
 
   // Get desk surface for spawn height calculation
   const deskSurfaces = useSurfacesByKind('desk');
@@ -21,6 +25,11 @@ export default function GenericPropControls({ className = '' }: { className?: st
     if (!deskSurface) return null;
     return deskSurface.origin[1];
   }, [deskSurface]);
+
+  // Check if a catalog item is already spawned
+  const isAlreadySpawned = useCallback((catalogId: string) => {
+    return genericProps.some(prop => prop.catalogId === catalogId);
+  }, [genericProps]);
 
   const handleSpawn = useCallback((catalogId: string) => {
     const entry = PROP_CATALOG.find((item) => item.id === catalogId);
@@ -41,6 +50,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
       url: entry.url,
       anchor: entry.anchor,
       position,
+      rotation: entry.defaultRotation,
     });
 
     setSelection({ kind: 'generic', id: prop.id });
@@ -65,16 +75,24 @@ export default function GenericPropControls({ className = '' }: { className?: st
         <div className={PANEL_CLASS}>
           <div className="text-xs uppercase tracking-wide text-white/70">Prop Catalog</div>
           <div className="mt-2 flex flex-col gap-2">
-            {PROP_CATALOG.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                className="w-full rounded border border-white/30 px-2 py-1 text-left text-xs uppercase tracking-wide hover:bg-white/10"
-                onClick={() => handleSpawn(entry.id)}
-              >
-                {entry.label}
-              </button>
-            ))}
+            {PROP_CATALOG.map((entry) => {
+              const alreadySpawned = isAlreadySpawned(entry.id);
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  disabled={alreadySpawned}
+                  className={`w-full rounded border px-2 py-1 text-left text-xs uppercase tracking-wide ${
+                    alreadySpawned
+                      ? 'cursor-not-allowed border-white/10 bg-white/5 text-white/30'
+                      : 'border-white/30 hover:bg-white/10'
+                  }`}
+                  onClick={() => !alreadySpawned && handleSpawn(entry.id)}
+                >
+                  {entry.label} {alreadySpawned && '(In Scene)'}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

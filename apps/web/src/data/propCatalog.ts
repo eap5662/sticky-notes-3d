@@ -16,6 +16,7 @@ export type PropCatalogEntry = {
   label: string;
   url: string;
   anchor?: AnchorConfig;
+  defaultRotation?: [number, number, number]; // Default rotation in radians [x, y, z]
   surfaces?: PropSurfaceConfig[];
 };
 
@@ -45,6 +46,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     label: 'Monitor',
     url: '/models/monitor_processed.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
+    defaultRotation: [0, -Math.PI / 2, 0] as [number, number, number], // Face desk forward (-90° Y-rotation)
     surfaces: [
       {
         id: createSurfaceId('monitor-basic-screen'),

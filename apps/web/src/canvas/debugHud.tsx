@@ -9,7 +9,6 @@ import { useState } from 'react';
 import { useCamera } from '@/state/cameraSlice';
 import { useSurface, useSurfaceMeta, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { useLayoutFrameState } from '@/canvas/hooks/useLayoutFrame';
-import { createSurfaceId } from '@/canvas/surfaces';
 
 function radToDeg(r: number) {
   return (r * 180) / Math.PI;
@@ -21,7 +20,7 @@ function formatVec3(vec: [number, number, number] | null) {
 }
 
 export default function DebugHud() {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
 
   const mode = useCamera((s) => s.mode);
   const yaw = useCamera((s) => s.yaw);
@@ -34,9 +33,11 @@ export default function DebugHud() {
   const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
   const deskSurface = useSurface(deskSurfaceId ?? '');
 
-  // TODO: Update when monitor1 is migrated (Phase 2)
-  const monitorMeta = useSurfaceMeta(createSurfaceId('monitor1'));
-  const monitorSurface = useSurface(createSurfaceId('monitor1'));
+  // Query spawned monitors by kind (supports multiple monitors)
+  const screenSurfaces = useSurfacesByKind('screen');
+  const screenSurfaceId = screenSurfaces[0]?.id;
+  const monitorMeta = useSurfaceMeta(screenSurfaceId ?? '');
+  const monitorSurface = useSurface(screenSurfaceId ?? '');
 
   const layout = useLayoutFrameState();
 

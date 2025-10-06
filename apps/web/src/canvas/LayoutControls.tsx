@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
-import { resetLayoutOverrides } from "@/state/layoutOverridesStore";
 import { useSelection } from "@/canvas/hooks/useSelection";
 import { useGenericProp, useGenericProps } from "@/canvas/hooks/useGenericProps";
 import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undockProp } from "@/state/genericPropsStore";
@@ -254,14 +253,6 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
               </div>
             </div>
           )}
-
-          <button
-            type="button"
-            className="mt-3 w-full rounded border border-white/30 px-2 py-1 text-xs uppercase tracking-wide hover:bg-white/10"
-            onClick={() => resetLayoutOverrides()}
-          >
-            Reset Adjustments
-          </button>
         </div>
     </div>
   );

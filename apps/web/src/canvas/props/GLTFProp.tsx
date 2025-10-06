@@ -4,7 +4,6 @@ import { useGLTF } from '@react-three/drei';
 import { extractSurfaceFromNode, type SurfaceExtractOptions } from './surfaceAdapter';
 import { registerSurface, unregisterSurface, type Surface } from '@/canvas/surfaces';
 import { setSurfaceMeta, clearSurfaceMeta } from '@/state/surfaceMetaStore';
-import { setPropBounds, clearPropBounds, type PropId } from '@/state/propBoundsStore';
 
 const toVec3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 
@@ -45,7 +44,6 @@ type Props = {
   scale?: number | [number, number, number];
   anchor?: AnchorConfig;
   onLoaded?: (root: THREE.Object3D, nodes: Record<string, THREE.Object3D>) => void;
-  propId?: PropId;
   onBoundsChanged?: (bounds: { min: [number, number, number]; max: [number, number, number] }) => void;
   groupProps?: GroupProps;
 };
@@ -93,7 +91,6 @@ export default function GLTFProp({
   scale,
   anchor,
   onLoaded,
-  propId,
   onBoundsChanged,
   groupProps,
 }: Props) {
@@ -184,19 +181,8 @@ export default function GLTFProp({
     if (bounds.isEmpty()) return;
 
     const payload = { min: toVec3(bounds.min), max: toVec3(bounds.max) };
-
-    if (propId) {
-      setPropBounds(propId, payload);
-    }
     onBoundsChanged?.(payload);
-  }, [propId, onBoundsChanged, scene.uuid, position, rotation, scale, anchorTuple]);
-
-  React.useEffect(() => {
-    if (!propId) return;
-    return () => {
-      clearPropBounds(propId);
-    };
-  }, [propId]);
+  }, [onBoundsChanged, scene.uuid, position, rotation, scale, anchorTuple]);
 
   const appliedScale = scale ?? 1;
 

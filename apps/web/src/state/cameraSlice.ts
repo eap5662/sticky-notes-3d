@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import * as THREE from "three";
 
+import type { SurfaceId } from '@/canvas/surfaces';
+
 /**
  * Camera modes:
  * - "desk": free-orbit around a target that keeps desk + monitor visible
@@ -10,7 +12,7 @@ import * as THREE from "three";
  */
 export type CameraMode =
   | { kind: "desk" }
-  | { kind: "screen"; surfaceId: "monitor1" };
+  | { kind: "screen"; surfaceId: SurfaceId };
 
 export type CameraPose = {
   yaw: number;
