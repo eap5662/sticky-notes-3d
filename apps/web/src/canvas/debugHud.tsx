@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useCamera } from '@/state/cameraSlice';
 import { useSurface, useSurfaceMeta, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { useLayoutFrameState } from '@/canvas/hooks/useLayoutFrame';
+import CameraModeToggle from './CameraModeToggle';
 
 function radToDeg(r: number) {
   return (r * 180) / Math.PI;
@@ -46,13 +47,16 @@ export default function DebugHud() {
 
   return (
     <div className="pointer-events-none absolute left-3 top-3 z-50 flex flex-col gap-2">
-      <button
-        type="button"
-        className="pointer-events-auto w-fit rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"
-        onClick={() => setIsOpen((prev) => !prev)}
-      >
-        {isOpen ? 'Hide Debug' : 'Show Debug'}
-      </button>
+      <div className="pointer-events-none flex items-center gap-2">
+        <button
+          type="button"
+          className="pointer-events-auto w-fit rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"
+          onClick={() => setIsOpen((prev) => !prev)}
+        >
+          {isOpen ? 'Hide Debug' : 'Show Debug'}
+        </button>
+        <CameraModeToggle />
+      </div>
 
       {isOpen && (
         <div

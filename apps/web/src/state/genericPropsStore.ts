@@ -274,3 +274,10 @@ export function setDockOffset(id: GenericPropId, offset: DockOffset) {
     return { ...prop, dockOffset: offset };
   });
 }
+
+export function deleteGenericProp(id: GenericPropId) {
+  const next = propsState.filter((prop) => prop.id !== id);
+  if (next.length !== propsState.length) {
+    emit(next);
+  }
+}

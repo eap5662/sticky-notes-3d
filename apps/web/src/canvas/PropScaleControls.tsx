@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 
-import { setGenericPropUniformScale } from '@/state/genericPropsStore';
+import { setGenericPropUniformScale, type Vec3 } from '@/state/genericPropsStore';
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
+import { useUndoHistoryStore } from '@/state/undoHistoryStore';
 
 const MIN_SCALE = 0.6;
 const MAX_SCALE = 1.6;
@@ -25,6 +26,7 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
   const selection = useSelection();
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
   const selectedGeneric = useGenericProp(selectedGenericId);
+  const pushAction = useUndoHistoryStore((s) => s.push);
 
   const target = useMemo<GenericTarget | null>(() => {
     if (!selectedGeneric) return null;
@@ -38,6 +40,7 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     };
   }, [selectedGeneric]);
   const [pendingValue, setPendingValue] = useState(target?.scale ?? 1);
+  const scaleBeforeRef = useRef<Vec3 | null>(null);
 
   const targetKey = target ? `${target.type}:${target.id}` : null;
 
@@ -58,9 +61,39 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
   );
 
   const handleReset = useCallback(() => {
-    if (!target) return;
+    if (!target || !selectedGeneric) return;
+    const before = selectedGeneric.scale;
+    const after: Vec3 = [1, 1, 1];
     setGenericPropUniformScale(target.id, 1);
-  }, [target]);
+    pushAction({
+      type: 'scale',
+      propId: target.id,
+      before,
+      after,
+    });
+  }, [target, selectedGeneric, pushAction]);
+
+  const handlePointerDown = useCallback(() => {
+    if (!selectedGeneric) return;
+    scaleBeforeRef.current = selectedGeneric.scale;
+  }, [selectedGeneric]);
+
+  const handlePointerUp = useCallback(() => {
+    if (!target || !selectedGeneric || !scaleBeforeRef.current) return;
+    const before = scaleBeforeRef.current;
+    const after = selectedGeneric.scale;
+
+    // Only push if scale actually changed
+    if (before[0] !== after[0]) {
+      pushAction({
+        type: 'scale',
+        propId: target.id,
+        before,
+        after,
+      });
+    }
+    scaleBeforeRef.current = null;
+  }, [target, selectedGeneric, pushAction]);
 
   const containerClass = ['pointer-events-none flex flex-col items-end gap-2', className]
     .filter(Boolean)
@@ -93,6 +126,8 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
             step={STEP}
             value={pendingValue}
             onChange={(event) => !isDocked && handleScaleChange(Number(event.target.value))}
+            onPointerDown={!isDocked ? handlePointerDown : undefined}
+            onPointerUp={!isDocked ? handlePointerUp : undefined}
             disabled={isDocked}
             className={sliderClass}
           />

@@ -4,6 +4,7 @@ import { create } from "zustand";
 import * as THREE from "three";
 
 import type { SurfaceId } from '@/canvas/surfaces';
+import { isInMarkingMode } from './deskBoundsStore';
 
 /**
  * Camera modes:
@@ -43,9 +44,14 @@ function clamp(x: number, min: number, max: number) {
 
 function clampPoseForKind(kind: "desk" | "screen", pose: CameraPose): CameraPose {
   const clamps = CAMERA_CLAMPS[kind];
+
+  // Widen pitch range during bounds marking mode for better top-down view
+  const pitchMin = (isInMarkingMode() && kind === "desk") ? (-85 * Math.PI) / 180 : clamps.pitch.min;
+  const pitchMax = clamps.pitch.max;
+
   return {
     yaw: clamp(pose.yaw, clamps.yaw.min, clamps.yaw.max),
-    pitch: clamp(pose.pitch, clamps.pitch.min, clamps.pitch.max),
+    pitch: clamp(pose.pitch, pitchMin, pitchMax),
     dolly: clamp(pose.dolly, clamps.dolly.min, clamps.dolly.max),
   };
 }

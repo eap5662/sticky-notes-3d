@@ -5,6 +5,7 @@ import { spawnGenericProp } from '@/state/genericPropsStore';
 import { setSelection } from '@/state/selectionStore';
 import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
 import { useGenericProps } from './hooks/useGenericProps';
+import { useUndoHistoryStore, type GenericPropSnapshot } from '@/state/undoHistoryStore';
 
 const PANEL_CLASS = 'pointer-events-auto w-56 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg';
 const BUTTON_CLASS = 'pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80';
@@ -12,6 +13,7 @@ const DESK_CLEARANCE = 0.015; // Same as GenericProp.tsx
 
 export default function GenericPropControls({ className = '' }: { className?: string } = {}) {
   const [isOpen, setIsOpen] = useState(false);
+  const pushAction = useUndoHistoryStore((s) => s.push);
 
   // Get all spawned props to check for duplicates
   const genericProps = useGenericProps();
@@ -53,9 +55,29 @@ export default function GenericPropControls({ className = '' }: { className?: st
       rotation: entry.defaultRotation,
     });
 
+    // Push spawn action to undo stack
+    const snapshot: GenericPropSnapshot = {
+      id: prop.id,
+      catalogId: prop.catalogId ?? '',
+      label: prop.label,
+      url: prop.url,
+      anchor: prop.anchor,
+      position: prop.position,
+      rotation: prop.rotation,
+      scale: prop.scale,
+      docked: prop.docked,
+      dockOffset: prop.dockOffset,
+    };
+
+    pushAction({
+      type: 'spawn',
+      propId: prop.id,
+      snapshot,
+    });
+
     setSelection({ kind: 'generic', id: prop.id });
     setIsOpen(false);
-  }, [deskHeight]);
+  }, [deskHeight, pushAction]);
 
   const containerClass = ['pointer-events-none flex flex-col items-end gap-2', className]
     .filter(Boolean)

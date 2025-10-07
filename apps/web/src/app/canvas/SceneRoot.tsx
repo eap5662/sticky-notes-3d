@@ -13,10 +13,14 @@ import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayou
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
 import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
 import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
+import { useUndoHistory } from "@/canvas/hooks/useUndoHistory";
 import LayoutControls from "@/canvas/LayoutControls";
 import PropScaleControls from "@/canvas/PropScaleControls";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
 import GenericPropControls from "@/canvas/GenericPropControls";
+import DeletePropButton from "@/canvas/DeletePropButton";
+import UndoToast from "@/canvas/UndoToast";
+import BoundsMarkingMode from "@/canvas/BoundsMarkingMode";
 import { clearSelection } from "@/state/selectionStore";
 import { undockProp, spawnGenericProp } from "@/state/genericPropsStore";
 import { PROP_CATALOG } from "@/data/propCatalog";
@@ -33,6 +37,7 @@ export default function SceneRoot() {
   const hasDesk = !!layoutState.frame;
 
   useDockConstraints();
+  useUndoHistory();
   const overrides = useLayoutOverridesState();
 
   // Auto-spawn desk on first mount if none exists
@@ -125,7 +130,10 @@ export default function SceneRoot() {
 
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
-      if (ev.key === "Escape") setMode({ kind: "desk" });
+      if (ev.key === "Escape") {
+        setMode({ kind: "desk" });
+        clearSelection();
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -136,8 +144,12 @@ export default function SceneRoot() {
   return (
     <div className="relative h-[70vh] min-h-[540px]">
       <DebugHud />
+      <UndoToast />
       <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
-        <GenericPropControls />
+        <div className="pointer-events-none flex items-center gap-2">
+          <DeletePropButton />
+          <GenericPropControls />
+        </div>
         <LayoutControls />
         <PropScaleControls />
       </div>
@@ -166,6 +178,7 @@ export default function SceneRoot() {
           {/* Desk now rendered via GenericPropsLayer (auto-spawned on mount) */}
           <GenericPropsLayer />
           <Surfaces />
+          <BoundsMarkingMode />
           {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
         </Suspense>
       </Canvas>

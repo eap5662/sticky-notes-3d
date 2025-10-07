@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import * as THREE from "three";
 
 import { useSelection } from "@/canvas/hooks/useSelection";
 import { useGenericProp, useGenericProps } from "@/canvas/hooks/useGenericProps";
-import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undockProp } from "@/state/genericPropsStore";
+import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undockProp, type Vec3 } from "@/state/genericPropsStore";
 import { useLayoutFrameState } from "@/canvas/hooks/useLayoutFrame";
+import { useUndoHistoryStore } from "@/state/undoHistoryStore";
+import { useSurface, useSurfacesByKind } from "@/canvas/hooks/useSurfaces";
+import { getDeskBounds } from "@/state/deskBoundsStore";
+import { pointInPolygon } from "@/canvas/math/polygon";
+import { planeProject } from "@/canvas/math/plane";
 
 const ROTATE_STEP_DEG = 5;
 const DEFAULT_HOLD_INTERVAL_MS = 500;
@@ -110,6 +116,7 @@ type LayoutControlsProps = {
 
 export default function LayoutControls({ className = "" }: LayoutControlsProps = {}) {
   const layoutFrame = useLayoutFrameState();
+  const pushAction = useUndoHistoryStore((s) => s.push);
 
   const selection = useSelection();
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
@@ -118,6 +125,34 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
   // Find desk prop (now in generic props store)
   const genericProps = useGenericProps();
   const deskProp = genericProps.find(p => p.catalogId === 'desk-default');
+
+  // Get desk surface for isOverDesk check
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskSurfaceId = deskSurfaces[0]?.id;
+  const deskSurface = useSurface(deskSurfaceId ?? '');
+
+  // Check if selected prop is over desk
+  const isOverDesk = (() => {
+    if (!selectedGeneric || !deskSurface || !deskProp) return false; // Default to false if no checks possible
+
+    // Check if desk has custom polygon bounds
+    const customBounds = getDeskBounds(deskProp.id);
+
+    if (customBounds) {
+      // Use point-in-polygon check with custom bounds
+      const propPoint2D: [number, number] = [selectedGeneric.position[0], selectedGeneric.position[2]];
+      return pointInPolygon(propPoint2D, customBounds);
+    }
+
+    // Fall back to UV bounds check (same as GenericProp.tsx)
+    const TMP_RAY = new THREE.Ray();
+    const rayOriginY = (selectedGeneric.bounds?.max[1] ?? selectedGeneric.position[1]) + 1;
+    TMP_RAY.origin.set(selectedGeneric.position[0], rayOriginY, selectedGeneric.position[2]);
+    TMP_RAY.direction.set(0, -1, 0);
+    const hit = planeProject(TMP_RAY, deskSurface);
+    if (!hit.hit) return false;
+    return hit.u >= 0 && hit.u <= 1 && hit.v >= 0 && hit.v <= 1;
+  })();
 
   // Rotation target: selected prop only (no automatic fallback to desk)
   const rotationTarget = selectedGeneric
@@ -129,17 +164,42 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
     : 0;
 
   const handleRotateLeft = useCallback(() => {
-    if (!rotationTarget) return;
+    if (!rotationTarget || !selectedGeneric) return;
+    const before = selectedGeneric.rotation;
     rotateGenericProp(rotationTarget.id, -ROTATE_STEP_DEG);
-  }, [rotationTarget]);
+    // Get updated rotation (need to wait a tick for state update)
+    setTimeout(() => {
+      const after = selectedGeneric.rotation;
+      pushAction({
+        type: 'rotate',
+        propId: rotationTarget.id,
+        before,
+        after,
+      });
+    }, 0);
+  }, [rotationTarget, selectedGeneric, pushAction]);
 
   const handleRotateRight = useCallback(() => {
-    if (!rotationTarget) return;
+    if (!rotationTarget || !selectedGeneric) return;
+    const before = selectedGeneric.rotation;
     rotateGenericProp(rotationTarget.id, ROTATE_STEP_DEG);
-  }, [rotationTarget]);
+    // Get updated rotation (need to wait a tick for state update)
+    setTimeout(() => {
+      const after = selectedGeneric.rotation;
+      pushAction({
+        type: 'rotate',
+        propId: rotationTarget.id,
+        before,
+        after,
+      });
+    }, 0);
+  }, [rotationTarget, selectedGeneric, pushAction]);
 
   const handleDock = useCallback(() => {
     if (!selectedGeneric || !layoutFrame.frame || !deskProp) return;
+
+    const beforeDocked = selectedGeneric.docked;
+    const beforePos = selectedGeneric.position;
 
     // Calculate dock offset from current world position
     const frame = layoutFrame.frame;
@@ -170,18 +230,46 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
     const propWorldYaw = rot[1];
     const propDeskRelativeYaw = propWorldYaw - deskYawRad;
 
-    dockPropWithOffset(selectedGeneric.id, {
+    const dockOffset = {
       lateral,
       depth,
       lift,
       yaw: propDeskRelativeYaw, // Desk-relative rotation
+    };
+
+    dockPropWithOffset(selectedGeneric.id, dockOffset);
+
+    // Push undo action
+    pushAction({
+      type: 'dock',
+      propId: selectedGeneric.id,
+      beforeDocked,
+      afterDocked: true,
+      beforePos,
+      afterPos: pos,
+      dockOffset,
     });
-  }, [selectedGeneric, layoutFrame.frame, deskProp]);
+  }, [selectedGeneric, layoutFrame.frame, deskProp, pushAction]);
 
   const handleUndock = useCallback(() => {
     if (!selectedGeneric) return;
+    const beforeDocked = selectedGeneric.docked;
+    const beforePos = selectedGeneric.position;
+    const dockOffset = selectedGeneric.dockOffset;
+
     undockProp(selectedGeneric.id);
-  }, [selectedGeneric]);
+
+    // Push undo action
+    pushAction({
+      type: 'undock',
+      propId: selectedGeneric.id,
+      beforeDocked,
+      afterDocked: false,
+      beforePos,
+      afterPos: beforePos, // Position doesn't change on undock
+      dockOffset,
+    });
+  }, [selectedGeneric, pushAction]);
 
   const containerClass = ["pointer-events-none flex flex-col items-end gap-2", className]
     .filter(Boolean)
@@ -242,13 +330,25 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
                     {isDesk ? 'Unlock Desk' : 'Undock from Desk'}
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
-                    onClick={handleDock}
-                  >
-                    {isDesk ? 'Lock Desk' : 'Dock to Desk'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className={`w-full rounded border px-2 py-1 text-xs ${
+                        isOverDesk
+                          ? 'border-white/30 hover:bg-white/10'
+                          : 'border-white/10 bg-white/5 text-white/40 cursor-not-allowed'
+                      }`}
+                      onClick={isOverDesk ? handleDock : undefined}
+                      disabled={!isOverDesk}
+                    >
+                      {isDesk ? 'Lock Desk' : 'Dock to Desk'}
+                    </button>
+                    {!isOverDesk && !isDesk && (
+                      <div className="mt-1 text-[10px] text-yellow-400/80">
+                        Move prop over desk surface to dock
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
