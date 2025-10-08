@@ -3,7 +3,6 @@ import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import { deleteGenericProp } from '@/state/genericPropsStore';
 import { useCamera } from '@/state/cameraSlice';
-import { useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { useUndoHistoryStore, type GenericPropSnapshot } from '@/state/undoHistoryStore';
 
 export default function DeletePropButton() {
@@ -13,7 +12,6 @@ export default function DeletePropButton() {
 
   const setMode = useCamera((s) => s.setMode);
   const cameraMode = useCamera((s) => s.mode);
-  const screenSurfaces = useSurfacesByKind('screen');
   const pushAction = useUndoHistoryStore((s) => s.push);
 
   const handleDelete = useCallback(() => {
@@ -40,10 +38,10 @@ export default function DeletePropButton() {
       snapshot,
     });
 
-    // If deleting monitor while in screen mode, switch to desk mode
+    // If deleting monitor while in screen mode, switch back to wide view
     const isMonitor = selectedGeneric.catalogId === 'monitor-basic';
     if (isMonitor && cameraMode.kind === 'screen') {
-      setMode({ kind: 'desk' });
+      setMode({ kind: 'wide' });
     }
 
     // Delete the prop (surfaces auto-cleanup via GLTFProp unmount)

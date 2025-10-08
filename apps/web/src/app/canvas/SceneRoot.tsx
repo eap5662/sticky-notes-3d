@@ -5,14 +5,12 @@ import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 
 import { useCamera } from "@/state/cameraSlice";
-import DeskViewController from "@/canvas/Cameras/DeskViewController";
-import ScreenViewController from "@/canvas/Cameras/ScreenViewController";
+import CameraRigController from "@/canvas/Cameras/CameraRigController";
 import { Surfaces } from "@/canvas/surfaceRendering";
 import DebugHud from "@/canvas/debugHud";
 import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayoutValidation";
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
 import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
-import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
 import { useUndoHistory } from "@/canvas/hooks/useUndoHistory";
 import LayoutControls from "@/canvas/LayoutControls";
 import PropScaleControls from "@/canvas/PropScaleControls";
@@ -40,7 +38,6 @@ function projectHorizontal(vec: readonly number[]): Vec3 {
 }
 
 export default function SceneRoot() {
-  const mode = useCamera((s) => s.mode);
   const setMode = useCamera((s) => s.setMode);
 
   const genericProps = useGenericProps();
@@ -141,8 +138,6 @@ export default function SceneRoot() {
 
   useDockConstraints();
   useUndoHistory();
-  const overrides = useLayoutOverridesState();
-
   // Auto-spawn desk on first mount if none exists
   const hasSpawnedDeskRef = useRef(false);
   useEffect(() => {
@@ -257,18 +252,15 @@ export default function SceneRoot() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      // Screen mode switching now handled by screen surface interaction
-      // TODO: Implement generic surface click detection if needed
-    },
-    [setMode]
-  );
+  const onPointerDown = useCallback(() => {
+    // Screen mode switching now handled by screen surface interaction
+    // TODO: Implement generic surface click detection if needed
+  }, []);
 
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
       if (ev.key === "Escape") {
-        setMode({ kind: "desk" });
+        setMode({ kind: "wide" });
         clearSelection();
       }
     }
@@ -318,7 +310,7 @@ export default function SceneRoot() {
           <GenericPropsLayer />
           <Surfaces />
           <BoundsMarkingMode />
-          {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
+          <CameraRigController />
         </Suspense>
       </Canvas>
 

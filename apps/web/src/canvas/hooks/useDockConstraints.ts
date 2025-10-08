@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import * as THREE from 'three';
 
 import { useLayoutFrameState } from './useLayoutFrame';
 import { useGenericProps } from './useGenericProps';

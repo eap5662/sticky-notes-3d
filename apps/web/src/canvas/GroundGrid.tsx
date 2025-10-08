@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import * as THREE from 'three';
 
 const GRID_SIZE_METERS = 6; // total width/length of grid
 const MINOR_STEP_METERS = 0.25; // 25 cm increments

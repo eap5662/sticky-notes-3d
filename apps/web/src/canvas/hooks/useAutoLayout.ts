@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
-import { CAMERA_CLAMPS, useCamera } from "@/state/cameraSlice";
+import { useCamera } from "@/state/cameraSlice";
+import { cameraViews } from "@/camera/cameraViews";
 import type { SurfaceMeta } from "@/state/surfaceMetaStore";
 import type { GenericPropBounds } from "@/state/genericPropsStore";
 import { useSurfaceMeta, useSurfacesByKind } from "./useSurfaces";
@@ -138,7 +139,7 @@ function solveCamera(
   const radius = boundingRadius(combinedBounds, target);
   const fov = THREE.MathUtils.degToRad(DEFAULT_CAMERA_FOV_DEG);
   let dolly = radius <= 0 ? 3.6 : (radius / Math.tan(fov / 2)) * CAMERA_RADIUS_MARGIN;
-  const { min, max } = CAMERA_CLAMPS.desk.dolly;
+  const { min, max } = cameraViews.wide.clamps.dolly;
   dolly = clampScalar(dolly, min, max);
 
   return {
@@ -195,16 +196,16 @@ export function useAutoLayout() {
     });
 
     const cameraStore = useCamera.getState();
-    const previousDeskDefault = cameraStore.defaults.desk;
-    if (!posesApproximatelyEqual(previousDeskDefault, cameraSolution.pose, 1e-4)) {
-      cameraStore.setDefaultPose("desk", cameraSolution.pose);
-      if (cameraStore.mode.kind === "desk") {
+    const previousWideDefault = cameraStore.defaults.wide;
+    if (!posesApproximatelyEqual(previousWideDefault, cameraSolution.pose, 1e-4)) {
+      cameraStore.setDefaultPose("wide", cameraSolution.pose);
+      if (cameraStore.mode.kind === "wide") {
         const currentPose: LayoutPose = {
           yaw: cameraStore.yaw,
           pitch: cameraStore.pitch,
           dolly: cameraStore.dolly,
         };
-        if (posesApproximatelyEqual(currentPose, previousDeskDefault, 2e-3)) {
+        if (posesApproximatelyEqual(currentPose, previousWideDefault, 2e-3)) {
           cameraStore.setPose(cameraSolution.pose);
         }
       }
@@ -213,4 +214,3 @@ export function useAutoLayout() {
 
   return useLayoutFrameState();
 }
-

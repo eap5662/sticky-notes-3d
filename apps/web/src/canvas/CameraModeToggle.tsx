@@ -14,15 +14,15 @@ export default function CameraModeToggle() {
   const handleToggle = useCallback(() => {
     if (!hasMonitor) return;
 
-    if (mode.kind === 'desk') {
+    if (mode.kind === 'wide') {
       setMode({ kind: 'screen', surfaceId: screenSurfaceId });
     } else {
-      setMode({ kind: 'desk' });
+      setMode({ kind: 'wide' });
     }
   }, [mode, hasMonitor, screenSurfaceId, setMode]);
 
-  const isDeskMode = mode.kind === 'desk';
-  const label = isDeskMode ? 'View: Desk' : 'View: Screen';
+  const isWideMode = mode.kind === 'wide';
+  const label = isWideMode ? 'View: Wide' : 'View: Screen';
 
   return (
     <button

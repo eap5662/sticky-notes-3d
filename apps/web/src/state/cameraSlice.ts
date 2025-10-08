@@ -1,52 +1,29 @@
 "use client";
 
 import { create } from "zustand";
-import * as THREE from "three";
-
 import type { SurfaceId } from '@/canvas/surfaces';
+import { cameraViews } from '@/camera/cameraViews';
+import type { CameraPose, ViewId } from '@/camera/types';
 import { isInMarkingMode } from './deskBoundsStore';
 
 /**
  * Camera modes:
- * - "desk": free-orbit around a target that keeps desk + monitor visible
+ * - "wide": free-orbit around a target that keeps desk + monitor visible
  * - "screen": constrained orbit around the selected screen surface center
  */
 export type CameraMode =
-  | { kind: "desk" }
+  | { kind: "wide" }
   | { kind: "screen"; surfaceId: SurfaceId };
-
-export type CameraPose = {
-  yaw: number;
-  pitch: number;
-  dolly: number;
-};
-
-/**
- * One place to tune clamped ranges for each mode.
- * All angles are in radians; dolly is a distance in world units (meters).
- */
-export const CAMERA_CLAMPS = {
-  desk: {
-    yaw: { min: (-45 * Math.PI) / 180, max: (45 * Math.PI) / 180 },
-    pitch: { min: (-12 * Math.PI) / 180, max: (22 * Math.PI) / 180 },
-    dolly: { min: 2.7, max: 4.8 },
-  },
-  screen: {
-    yaw: { min: (-18 * Math.PI) / 180, max: (18 * Math.PI) / 180 },
-    pitch: { min: (-12 * Math.PI) / 180, max: (12 * Math.PI) / 180 },
-    dolly: { min: 1.0, max: 2.2 },
-  },
-} as const;
 
 function clamp(x: number, min: number, max: number) {
   return Math.max(min, Math.min(max, x));
 }
 
-function clampPoseForKind(kind: "desk" | "screen", pose: CameraPose): CameraPose {
-  const clamps = CAMERA_CLAMPS[kind];
+function clampPoseForKind(viewId: ViewId, pose: CameraPose): CameraPose {
+  const clamps = cameraViews[viewId].clamps;
 
   // Widen pitch range during bounds marking mode for better top-down view
-  const pitchMin = (isInMarkingMode() && kind === "desk") ? (-85 * Math.PI) / 180 : clamps.pitch.min;
+  const pitchMin = (isInMarkingMode() && viewId === "wide") ? (-85 * Math.PI) / 180 : clamps.pitch.min;
   const pitchMax = clamps.pitch.max;
 
   return {
@@ -66,7 +43,7 @@ export function clampPose(
   pitch: number,
   dolly: number
 ): CameraPose {
-  const key = mode.kind === "desk" ? "desk" : "screen";
+  const key: ViewId = mode.kind === "wide" ? "wide" : "screen";
   return clampPoseForKind(key, { yaw, pitch, dolly });
 }
 
@@ -75,38 +52,27 @@ type CameraState = {
   yaw: number;
   pitch: number;
   dolly: number;
-  defaults: {
-    desk: CameraPose;
-    screen: CameraPose;
-  };
+  defaults: Record<ViewId, CameraPose>;
   setMode: (mode: CameraMode) => void;
   setPose: (p: Partial<Pick<CameraState, "yaw" | "pitch" | "dolly">>) => void;
   orbitBy: (dYaw: number, dPitch: number) => void;
   dollyBy: (d: number) => void;
   resetPose: () => void;
-  setDefaultPose: (kind: CameraMode["kind"], pose: CameraPose) => void;
+  setDefaultPose: (view: ViewId, pose: CameraPose) => void;
 };
 
-const STATIC_DEFAULTS: { desk: CameraPose; screen: CameraPose } = {
-  desk: {
-    yaw: THREE.MathUtils.degToRad(22),
-    pitch: THREE.MathUtils.degToRad(6),
-    dolly: 3.8,
-  },
-  screen: {
-    yaw: THREE.MathUtils.degToRad(-10),
-    pitch: THREE.MathUtils.degToRad(-4),
-    dolly: 1.7,
-  },
+const STATIC_DEFAULTS: Record<ViewId, CameraPose> = {
+  wide: { ...cameraViews.wide.defaultPose },
+  screen: { ...cameraViews.screen.defaultPose },
 };
 
 const INITIAL_STATE: Pick<CameraState, "mode" | "yaw" | "pitch" | "dolly" | "defaults"> = {
-  mode: { kind: "desk" },
-  yaw: STATIC_DEFAULTS.desk.yaw,
-  pitch: STATIC_DEFAULTS.desk.pitch,
-  dolly: STATIC_DEFAULTS.desk.dolly,
+  mode: { kind: "wide" },
+  yaw: STATIC_DEFAULTS.wide.yaw,
+  pitch: STATIC_DEFAULTS.wide.pitch,
+  dolly: STATIC_DEFAULTS.wide.dolly,
   defaults: {
-    desk: { ...STATIC_DEFAULTS.desk },
+    wide: { ...STATIC_DEFAULTS.wide },
     screen: { ...STATIC_DEFAULTS.screen },
   },
 };
@@ -146,16 +112,16 @@ export const useCamera = create<CameraState>((set, get) => ({
 
   resetPose: () => {
     const { mode, defaults } = get();
-    const pose = mode.kind === "desk" ? defaults.desk : defaults.screen;
+    const pose = mode.kind === "wide" ? defaults.wide : defaults.screen;
     set({ yaw: pose.yaw, pitch: pose.pitch, dolly: pose.dolly });
   },
 
-  setDefaultPose: (kind, pose) => {
-    const clamped = clampPoseForKind(kind === "desk" ? "desk" : "screen", pose);
+  setDefaultPose: (view, pose) => {
+    const clamped = clampPoseForKind(view, pose);
     set((state) => ({
       defaults: {
         ...state.defaults,
-        [kind === "desk" ? "desk" : "screen"]: clonePose(clamped),
+        [view]: clonePose(clamped),
       },
     }));
   },

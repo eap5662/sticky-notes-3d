@@ -122,7 +122,7 @@ useAutoLayout() orchestrates:
 
 #### 3. State Management
 **Zustand Stores (Client-Side):**
-- `cameraSlice.ts`: Camera mode (desk/screen), yaw/pitch/dolly, clamping per mode
+- `cameraSlice.ts`: Camera mode (wide/screen), yaw/pitch/dolly, per-view defaults & clamps
 - `surfaceMetaStore.ts`: Surface metadata (center, normal, uDir, vDir, extents)
 - `propBoundsStore.ts`: World-space axis-aligned bounding boxes per prop
 - `layoutFrameStore.ts`: Canonical desk frame + computed camera/monitor placement
@@ -139,18 +139,15 @@ SceneRoot reads layoutFrameStore → applies transforms to props
 ```
 
 #### 4. Camera System
-Two modes with distinct behavior and clamps:
+Two views with distinct behavior and clamps:
 
-- **Desk mode**: Orbit around computed target (desk+monitor center), wide clamps
-  - Yaw: -45° to 45°, Pitch: -12° to 22°, Dolly: 2.7–4.8m
-- **Screen mode**: Tight orbit around monitor surface center
-  - Yaw: -18° to 18°, Pitch: -12° to 12°, Dolly: 1.0–2.2m
+- **Wide view**: Camera-controls orbits around the layout target (desk + monitor center), yaw ±45°, pitch -12° → 22°, dolly 2.7–4.8m.
+- **Screen view**: Focused orbit around the selected monitor surface center, yaw ±18°, pitch ±12°, dolly 1.0–2.2m.
 
-**Controllers:**
-- `DeskViewController.tsx`: OrbitControls for desk mode
-- `ScreenViewController.tsx`: OrbitControls for screen mode
-- Click monitor → enter screen mode (via raycasting + `planeProject`)
-- Press Escape → return to desk mode
+**Controller:**
+- `CameraRigController.tsx`: Unified camera-controls rig that configures clamps per view, listens to `cameraSlice`, and animates transitions (`setLookAt`) when switching views.
+- Click monitor → enter Screen view (via existing surface detection).
+- Press Escape → return to Wide view.
 
 #### 5. Validation System
 `useLayoutValidation.ts` runs checks on every layout change:

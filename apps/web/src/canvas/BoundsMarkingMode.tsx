@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import * as THREE from 'three';
 import { useThree } from '@react-three/fiber';
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import { useSurface, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { planeProject } from '@/canvas/math/plane';
-import { setDeskBounds, clearDeskBounds, setMarkingMode, type Vec2 } from '@/state/deskBoundsStore';
+import { setDeskBounds, setMarkingMode, type Vec2 } from '@/state/deskBoundsStore';
 
 const MARKER_COLOR = '#fbbf24'; // Yellow
 const LINE_COLOR = '#fbbf24'; // Yellow
