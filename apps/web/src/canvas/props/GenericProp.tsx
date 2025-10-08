@@ -38,6 +38,7 @@ const HIGHLIGHT_MINOR_RADIUS_SCALE = 0.55;
 const HIGHLIGHT_MAJOR_RADIUS_SCALE = 1.1;
 const DESK_CLEARANCE = 0.015;
 const CLEARANCE_EPSILON = 1e-4;
+const MAX_DESK_DRAG_STEP = 0.04; // Limit desk translation per pointer event (~4cm)
 
 type GenericPropInstanceProps = {
   prop: GenericProp;
@@ -63,6 +64,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const hasAdjustedHeightRef = useRef(false);
   const prevDeskHeightRef = useRef<number | null>(null);
   const positionBeforeDragRef = useRef<Vec3 | null>(null);
+  const latestPositionRef = useRef<Vec3>(prop.position);
 
   const pushAction = useUndoHistoryStore((s) => s.push);
 
@@ -253,16 +255,47 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       event.stopPropagation();
       event.nativeEvent.stopImmediatePropagation?.();
 
-      const intersection = computeIntersection(event);
-      if (!intersection) {
+      const pointerPoint = computeIntersection(event);
+      if (!pointerPoint) {
         return;
       }
 
-      const next = intersection.add(grabOffsetRef.current);
-      constrainHeight(next);
-      setGenericPropPosition(prop.id, [next.x, next.y, next.z]);
+      const desired = pointerPoint.clone().add(grabOffsetRef.current);
+      constrainHeight(desired);
+      if (prop.catalogId === 'desk-default') {
+        const current = latestPositionRef.current;
+        const deltaX = desired.x - current[0];
+        const deltaZ = desired.z - current[2];
+        const planarStep = Math.hypot(deltaX, deltaZ);
+        if (planarStep > MAX_DESK_DRAG_STEP) {
+          const scale = MAX_DESK_DRAG_STEP / planarStep;
+          desired.x = current[0] + deltaX * scale;
+          desired.z = current[2] + deltaZ * scale;
+          desired.y = current[1];
+        }
+      }
+      const nextTuple: Vec3 = [desired.x, desired.y, desired.z];
+      latestPositionRef.current = nextTuple;
+      setGenericPropPosition(prop.id, nextTuple);
+      grabOffsetRef.current.set(
+        nextTuple[0] - pointerPoint.x,
+        nextTuple[1] - pointerPoint.y,
+        nextTuple[2] - pointerPoint.z,
+      );
     },
-    [computeIntersection, prop.id, constrainHeight],
+    [computeIntersection, prop.id, constrainHeight, prop.catalogId],
+  );
+
+  const handlePointerLeave = useCallback(
+    (event: ThreeEvent<PointerEvent>) => {
+      if (!dragActiveRef.current) return;
+      const target = event.target as Element | null;
+      if (target && typeof target.hasPointerCapture === 'function' && target.hasPointerCapture(event.pointerId)) {
+        return;
+      }
+      finishDrag(event);
+    },
+    [finishDrag],
   );
 
   const isOverDesk = useMemo(() => {
@@ -344,6 +377,10 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deskHeight, isOverDesk, prop.id, prop.status, prop.catalogId]);
 
+  useEffect(() => {
+    latestPositionRef.current = prop.position;
+  }, [prop.position]);
+
   const highlightData = useMemo(() => {
     if (!prop.bounds) {
       return {
@@ -382,7 +419,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
           onPointerMove: handlePointerMove,
           onPointerUp: finishDrag,
           onPointerCancel: finishDrag,
-          onPointerLeave: finishDrag,
+          onPointerLeave: handlePointerLeave,
         }}
       />
       {isSelected && isActive && (
@@ -394,4 +431,3 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     </>
   );
 }
-
