@@ -1,11 +1,8 @@
 import type { GenericPropId } from '@/state/genericPropsStore';
-import type { PropId } from '@/state/propBoundsStore';
 
-type DeskSelection = { kind: 'desk'; id: Extract<PropId, 'desk'> };
-type MonitorSelection = { kind: 'monitor'; id: Extract<PropId, 'monitor1'> };
 type GenericSelection = { kind: 'generic'; id: GenericPropId };
 
-export type Selection = DeskSelection | MonitorSelection | GenericSelection | null;
+export type Selection = GenericSelection | null;
 
 type Subscriber = () => void;
 

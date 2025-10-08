@@ -1,43 +1,199 @@
 "use client";
-import { Suspense, useCallback, useEffect, useRef } from "react";
+import { Suspense, useCallback, useEffect, useRef, useMemo } from "react";
+import type { MutableRefObject } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 
 import { useCamera } from "@/state/cameraSlice";
-import DeskViewController from "@/canvas/Cameras/DeskViewController";
-import ScreenViewController from "@/canvas/Cameras/ScreenViewController";
+import CameraRigController from "@/canvas/Cameras/CameraRigController";
 import { Surfaces } from "@/canvas/surfaceRendering";
-import { planeProject } from "@/canvas/math/plane";
 import DebugHud from "@/canvas/debugHud";
-import { useSurface } from "@/canvas/hooks/useSurfaces";
 import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayoutValidation";
-import { DeskProp } from "@/canvas/props/DeskProp";
-import { MonitorProp } from "@/canvas/props/MonitorProp";
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
-import { useLayoutOverridesState } from "@/canvas/hooks/useLayoutOverrides";
-import { usePropScale } from "@/canvas/hooks/usePropScale";
+import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
+import { useUndoHistory } from "@/canvas/hooks/useUndoHistory";
 import LayoutControls from "@/canvas/LayoutControls";
 import PropScaleControls from "@/canvas/PropScaleControls";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
 import GenericPropControls from "@/canvas/GenericPropControls";
-import GenericPropScaleBanner from "@/canvas/GenericPropScaleBanner";
+import DeletePropButton from "@/canvas/DeletePropButton";
+import UndoToast from "@/canvas/UndoToast";
+import BoundsMarkingMode from "@/canvas/BoundsMarkingMode";
+import DeskDriveHint from "@/canvas/DeskDriveHint";
+import GroundGrid from "@/canvas/GroundGrid";
 import { clearSelection } from "@/state/selectionStore";
+import { undockProp, spawnGenericProp, setGenericPropPosition, type Vec3, type GenericProp } from "@/state/genericPropsStore";
+import { PROP_CATALOG } from "@/data/propCatalog";
+import { useGenericProps } from "@/canvas/hooks/useGenericProps";
+import { useLayoutFrame } from "@/canvas/hooks/useLayoutFrame";
+import { useSelection } from "@/canvas/hooks/useSelection";
+import type { LayoutFrame } from "@/state/layoutFrameStore";
+
+const DESK_MOVE_STEP = 0.25;
+const DESK_MOVE_INTERVAL_MS = 200;
+const DESK_MOVE_KEYS = new Set(['w', 'a', 's', 'd']);
+
+function projectHorizontal(vec: readonly number[]): Vec3 {
+  return [vec[0], 0, vec[2]] as Vec3;
+}
 
 export default function SceneRoot() {
-  const mode = useCamera((s) => s.mode);
   const setMode = useCamera((s) => s.setMode);
 
-  const deskSurface = useSurface("desk");
-  const monitorSurface = useSurface("monitor1");
-
+  const genericProps = useGenericProps();
   const layoutState = useAutoLayout();
-  const overrides = useLayoutOverridesState();
-  const deskYawRad = THREE.MathUtils.degToRad(overrides.deskYawDeg);
-  const deskRotation: [number, number, number] = [0, deskYawRad, 0];
-  const monitorPlacement = layoutState.monitorPlacement;
+  const layoutFrame = useLayoutFrame();
+  const hasDesk = !!layoutState.frame;
 
-  const deskScale = usePropScale("desk");
-  const monitorScale = usePropScale("monitor1");
+  const deskProp = useMemo(() => {
+    return genericProps.find(p => p.catalogId === 'desk-default') ?? null;
+  }, [genericProps]);
+
+  const deskPropRef = useRef<GenericProp | null>(deskProp);
+
+  const layoutFrameRef = useRef<LayoutFrame | null>(layoutFrame);
+  useEffect(() => {
+    layoutFrameRef.current = layoutFrame;
+  }, [layoutFrame]);
+
+  const selection = useSelection();
+
+  const pressedKeysRef = useRef<Set<string>>(new Set());
+  const selectedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const selectedId = selection?.kind === 'generic' ? selection.id : null;
+    selectedIdRef.current = selectedId;
+    const desk = deskPropRef.current;
+    if (!desk || selectedId !== desk.id) {
+      pressedKeysRef.current.clear();
+    }
+  }, [selection]);
+
+  useEffect(() => {
+    deskPropRef.current = deskProp;
+    if (!deskProp || selectedIdRef.current !== deskProp.id) {
+      pressedKeysRef.current.clear();
+    }
+  }, [deskProp]);
+
+  const applyDeskMovement = (
+    deskRef: MutableRefObject<GenericProp | null>,
+    frameRef: MutableRefObject<LayoutFrame | null>,
+    keysRef: MutableRefObject<Set<string>>,
+    selectionRef: MutableRefObject<string | null>,
+  ) => {
+    const pressed = keysRef.current;
+    if (pressed.size === 0) return;
+
+    const desk = deskRef.current;
+    if (!desk || desk.status === 'dragging') return;
+    const selectedId = selectionRef.current;
+    if (!selectedId || selectedId !== desk.id) return;
+
+    const frame = frameRef.current;
+    const forward = frame ? projectHorizontal(frame.forward) : ([1, 0, 0] as Vec3);
+    const right = frame ? projectHorizontal(frame.right) : ([0, 0, -1] as Vec3);
+
+    let moveX = 0;
+    let moveZ = 0;
+
+    if (pressed.has('w')) {
+      moveX += forward[0];
+      moveZ += forward[2];
+    }
+    if (pressed.has('s')) {
+      moveX -= forward[0];
+      moveZ -= forward[2];
+    }
+    if (pressed.has('d')) {
+      moveX -= right[0];
+      moveZ -= right[2];
+    }
+    if (pressed.has('a')) {
+      moveX += right[0];
+      moveZ += right[2];
+    }
+
+    if (Math.abs(moveX) < 1e-6 && Math.abs(moveZ) < 1e-6) {
+      return;
+    }
+
+    const length = Math.hypot(moveX, moveZ);
+    if (length < 1e-6) return;
+
+    const scale = DESK_MOVE_STEP / length;
+    const deltaX = moveX * scale;
+    const deltaZ = moveZ * scale;
+
+    const nextPos: Vec3 = [
+      desk.position[0] + deltaX,
+      desk.position[1],
+      desk.position[2] + deltaZ,
+    ];
+
+    setGenericPropPosition(desk.id, nextPos);
+    deskRef.current = { ...desk, position: nextPos };
+  };
+
+  useDockConstraints();
+  useUndoHistory();
+  // Auto-spawn desk on first mount if none exists
+  const hasSpawnedDeskRef = useRef(false);
+  useEffect(() => {
+    if (hasSpawnedDeskRef.current) return;
+
+    const existingDesk = genericProps.find(p => p.catalogId === 'desk-default');
+    if (existingDesk) {
+      hasSpawnedDeskRef.current = true;
+      return;
+    }
+
+    const deskEntry = PROP_CATALOG.find(entry => entry.id === 'desk-default');
+    if (!deskEntry) return;
+
+    spawnGenericProp({
+      catalogId: deskEntry.id,
+      label: deskEntry.label,
+      url: deskEntry.url,
+      anchor: deskEntry.anchor,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+    });
+    hasSpawnedDeskRef.current = true;
+  }, [genericProps]);
+
+  // Auto-undock all props when desk is deleted
+  const prevDeskIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const currentDeskId = deskProp?.id ?? null;
+
+    // Desk was removed
+    if (prevDeskIdRef.current && !currentDeskId) {
+      genericProps.forEach(prop => {
+        if (prop.docked) {
+          undockProp(prop.id);
+        }
+      });
+    }
+
+    prevDeskIdRef.current = currentDeskId;
+  }, [deskProp, genericProps]);
+
+  // Handler to spawn desk (from banner button)
+  const handleSpawnDesk = useCallback(() => {
+    const deskEntry = PROP_CATALOG.find(entry => entry.id === 'desk-default');
+    if (!deskEntry) return;
+
+    spawnGenericProp({
+      catalogId: deskEntry.id,
+      label: deskEntry.label,
+      url: deskEntry.url,
+      anchor: deskEntry.anchor,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+    });
+  }, []);
 
   const handleLayoutWarnings = useCallback((warnings: LayoutWarning[]) => {
     warnings.forEach((warning) => {
@@ -54,52 +210,76 @@ export default function SceneRoot() {
     onReport: handleLayoutWarnings,
   });
 
-  const monitorPosition = monitorPlacement?.position as [number, number, number] | undefined;
-  const monitorRotation = monitorPlacement?.rotation as [number, number, number] | undefined;
+  useEffect(() => {
+    function handleKeyDown(ev: KeyboardEvent) {
+      const key = ev.key.toLowerCase();
+      if (!DESK_MOVE_KEYS.has(key)) return;
+      if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return;
+      const desk = deskPropRef.current;
+      const selectedId = selectedIdRef.current;
+      if (!desk || desk.status === 'dragging' || !selectedId || selectedId !== desk.id) return;
+      if (!pressedKeysRef.current.has(key)) {
+        pressedKeysRef.current.add(key);
+        applyDeskMovement(deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
+      }
+      ev.preventDefault();
+    }
+
+    function handleKeyUp(ev: KeyboardEvent) {
+      const key = ev.key.toLowerCase();
+      if (!DESK_MOVE_KEYS.has(key)) return;
+      if (pressedKeysRef.current.delete(key)) {
+        ev.preventDefault();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      applyDeskMovement(deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
+    }, DESK_MOVE_INTERVAL_MS);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
 
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!monitorSurface) return;
-
-      const cam = cameraRef.current;
-      const canvas = canvasElRef.current;
-      if (!cam || !canvas) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
-
-      const ndc = new THREE.Vector2(x, y);
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(ndc, cam);
-      const ray = raycaster.ray;
-
-      const hit = planeProject(ray, monitorSurface);
-      if (hit.hit && hit.u >= 0 && hit.u <= 1 && hit.v >= 0 && hit.v <= 1) {
-        setMode({ kind: "screen", surfaceId: "monitor1" });
-      }
-    },
-    [monitorSurface, setMode]
-  );
+  const onPointerDown = useCallback(() => {
+    // Screen mode switching now handled by screen surface interaction
+    // TODO: Implement generic surface click detection if needed
+  }, []);
 
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
-      if (ev.key === "Escape") setMode({ kind: "desk" });
+      if (ev.key === "Escape") {
+        setMode({ kind: "wide" });
+        clearSelection();
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [setMode]);
 
-  const surfacesReady = !!deskSurface && !!monitorSurface;
+  const isLoading = layoutState.status === 'pending';
 
   return (
     <div className="relative h-[70vh] min-h-[540px]">
       <DebugHud />
+      <UndoToast />
+      <DeskDriveHint />
       <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
-        <GenericPropControls />
+        <div className="pointer-events-none flex items-center gap-2">
+          <DeletePropButton />
+          <GenericPropControls />
+        </div>
         <LayoutControls />
         <PropScaleControls />
       </div>
@@ -125,25 +305,38 @@ export default function SceneRoot() {
         onPointerMissed={() => clearSelection()}
       >
         <Suspense fallback={null}>
-          <DeskProp url="/models/DeskTopPlane.glb" rotation={deskRotation} scale={deskScale} />
-          <MonitorProp
-            url="/models/monitor_processed.glb"
-            position={monitorPosition}
-            rotation={monitorRotation}
-            scale={monitorScale}
-          />
-
+          {/* Desk now rendered via GenericPropsLayer (auto-spawned on mount) */}
+          <GroundGrid />
           <GenericPropsLayer />
           <Surfaces />
-          {mode.kind === "desk" ? <DeskViewController /> : <ScreenViewController />}
+          <BoundsMarkingMode />
+          <CameraRigController />
         </Suspense>
       </Canvas>
 
-      <GenericPropScaleBanner />
+      {/* No desk banner (Frozen World) */}
+      {!hasDesk && !isLoading && (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-30 text-center">
+          <div className="rounded-lg bg-black/90 px-8 py-6 text-white shadow-2xl border border-white/10">
+            <div className="text-xl font-semibold">No Workspace Active</div>
+            <div className="mt-2 text-sm text-white/70 max-w-xs">
+              Add a desk to activate props and enable interactions
+            </div>
+            <button
+              type="button"
+              className="mt-4 rounded-full bg-teal-500 px-6 py-2.5 text-sm font-semibold hover:bg-teal-400 transition-colors"
+              onClick={handleSpawnDesk}
+            >
+              Add Desk
+            </button>
+          </div>
+        </div>
+      )}
 
-      {!surfacesReady && (
+      {/* Loading indicator */}
+      {isLoading && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md bg-black/60 px-4 py-2 text-sm text-white">
-          Loading desk + monitor surfaces...
+          Loading workspace...
         </div>
       )}
     </div>

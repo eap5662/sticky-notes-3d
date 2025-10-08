@@ -1,5 +1,6 @@
 import { SurfaceId } from '@/canvas/surfaces';
 import type { Vec3 } from '@/canvas/surfaces';
+import type { SurfaceKind } from '@/data/propCatalog';
 
 export type SurfaceMeta = {
   center: Vec3;
@@ -7,6 +8,7 @@ export type SurfaceMeta = {
   uDir: Vec3;
   vDir: Vec3;
   extents: { u: number; v: number; thickness: number };
+  kind?: SurfaceKind;
 };
 
 const metaRegistry = new Map<SurfaceId, SurfaceMeta>();
@@ -58,4 +60,18 @@ export function subscribeSurfaceMeta(listener: () => void) {
 
 export function getAllSurfaceMeta(): [SurfaceId, SurfaceMeta][] {
   return Array.from(metaRegistry.entries());
+}
+
+export function getSurfacesByKind(kind: SurfaceKind): Array<{ id: SurfaceId; meta: SurfaceMeta }> {
+  const results: Array<{ id: SurfaceId; meta: SurfaceMeta }> = [];
+  metaRegistry.forEach((meta, id) => {
+    if (meta.kind === kind) {
+      results.push({ id, meta });
+    }
+  });
+  return results;
+}
+
+export function getSurfaceById(id: SurfaceId): SurfaceMeta | null {
+  return metaRegistry.get(id) ?? null;
 }

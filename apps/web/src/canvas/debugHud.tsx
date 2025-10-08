@@ -7,8 +7,9 @@
  */
 import { useState } from 'react';
 import { useCamera } from '@/state/cameraSlice';
-import { useSurface, useSurfaceMeta } from '@/canvas/hooks/useSurfaces';
+import { useSurface, useSurfaceMeta, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { useLayoutFrameState } from '@/canvas/hooks/useLayoutFrame';
+import CameraModeToggle from './CameraModeToggle';
 
 function radToDeg(r: number) {
   return (r * 180) / Math.PI;
@@ -20,18 +21,24 @@ function formatVec3(vec: [number, number, number] | null) {
 }
 
 export default function DebugHud() {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
 
   const mode = useCamera((s) => s.mode);
   const yaw = useCamera((s) => s.yaw);
   const pitch = useCamera((s) => s.pitch);
   const dolly = useCamera((s) => s.dolly);
 
-  const deskMeta = useSurfaceMeta('desk');
-  const monitorMeta = useSurfaceMeta('monitor1');
+  // Query desk by kind (reactively subscribes to surface changes)
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskSurfaceId = deskSurfaces[0]?.id;
+  const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
+  const deskSurface = useSurface(deskSurfaceId ?? '');
 
-  const deskSurface = useSurface('desk');
-  const monitorSurface = useSurface('monitor1');
+  // Query spawned monitors by kind (supports multiple monitors)
+  const screenSurfaces = useSurfacesByKind('screen');
+  const screenSurfaceId = screenSurfaces[0]?.id;
+  const monitorMeta = useSurfaceMeta(screenSurfaceId ?? '');
+  const monitorSurface = useSurface(screenSurfaceId ?? '');
 
   const layout = useLayoutFrameState();
 
@@ -40,13 +47,16 @@ export default function DebugHud() {
 
   return (
     <div className="pointer-events-none absolute left-3 top-3 z-50 flex flex-col gap-2">
-      <button
-        type="button"
-        className="pointer-events-auto w-fit rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"
-        onClick={() => setIsOpen((prev) => !prev)}
-      >
-        {isOpen ? 'Hide Debug' : 'Show Debug'}
-      </button>
+      <div className="pointer-events-none flex items-center gap-2">
+        <button
+          type="button"
+          className="pointer-events-auto w-fit rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80"
+          onClick={() => setIsOpen((prev) => !prev)}
+        >
+          {isOpen ? 'Hide Debug' : 'Show Debug'}
+        </button>
+        <CameraModeToggle />
+      </div>
 
       {isOpen && (
         <div
@@ -79,9 +89,6 @@ export default function DebugHud() {
             </div>
             <div>
               target: <span className="font-semibold">{formatVec3(layout.cameraTarget)}</span>
-            </div>
-            <div>
-              monitor pos: <span className="font-semibold">{formatVec3(layout.monitorPlacement?.position ?? null)}</span>
             </div>
           </div>
 

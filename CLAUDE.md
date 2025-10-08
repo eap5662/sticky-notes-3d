@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 RECENT MAJOR CHANGES (January 2025)
+
+**Migration to Generic Props System - IN PROGRESS**
+
+The codebase recently underwent a major refactor migrating from hardcoded desk/monitor props to a unified **Generic Props** system. See `SPRINT_SUMMARY.md` for full details.
+
+**Key Changes:**
+- ✅ **Desk is now a generic prop** - Spawns from `PROP_CATALOG`, managed by `genericPropsStore`
+- ✅ **Dynamic surface lookups** - Use `useSurfacesByKind('desk')` instead of `useSurface('desk')`
+- ✅ **Docking system** - Props can lock to desk with relative offsets maintained through rotation
+- ✅ **Frozen world** - Scene functional without desk (props inactive, "No Workspace" banner)
+- ✅ **Auto-show/hide panels** - Edit panels appear on selection, disappear on deselection
+- ⚠️ **Phase 5 incomplete** - Desk scaling still uses old `propScaleStore` (needs migration)
+- ⚠️ **Phase 7 incomplete** - `PropId` type still includes 'desk' (cleanup needed)
+
+**New Files You Should Know:**
+- `apps/web/src/data/propCatalog.ts` - Prop catalog with surfaces config
+- `apps/web/src/state/genericPropsStore.ts` - Unified prop state (position, rotation, scale, docking)
+- `apps/web/src/canvas/GenericProp.tsx` - Generic prop rendering with auto-height adjustment
+- `apps/web/src/canvas/hooks/useDockConstraints.ts` - Docking system (props follow desk rotation)
+- `apps/web/src/canvas/hooks/useSurfacesByKind.ts` - Dynamic surface lookup by kind
+
+**Updated Architecture:**
+- All props (desk, monitor, lamp) use same state management
+- Props spawn from catalog, can be selected/scaled/rotated/docked/deleted
+- Desk can be deleted → "frozen world" state
+- Docked props cannot be edited (greyed out controls)
+
+**Read SPRINT_SUMMARY.md before making changes to prop system!**
+
+---
+
 ## Development Commands
 
 **Starting the development servers:**
@@ -90,7 +122,7 @@ useAutoLayout() orchestrates:
 
 #### 3. State Management
 **Zustand Stores (Client-Side):**
-- `cameraSlice.ts`: Camera mode (desk/screen), yaw/pitch/dolly, clamping per mode
+- `cameraSlice.ts`: Camera mode (wide/screen), yaw/pitch/dolly, per-view defaults & clamps
 - `surfaceMetaStore.ts`: Surface metadata (center, normal, uDir, vDir, extents)
 - `propBoundsStore.ts`: World-space axis-aligned bounding boxes per prop
 - `layoutFrameStore.ts`: Canonical desk frame + computed camera/monitor placement
@@ -107,18 +139,15 @@ SceneRoot reads layoutFrameStore → applies transforms to props
 ```
 
 #### 4. Camera System
-Two modes with distinct behavior and clamps:
+Two views with distinct behavior and clamps:
 
-- **Desk mode**: Orbit around computed target (desk+monitor center), wide clamps
-  - Yaw: -45° to 45°, Pitch: -12° to 22°, Dolly: 2.7–4.8m
-- **Screen mode**: Tight orbit around monitor surface center
-  - Yaw: -18° to 18°, Pitch: -12° to 12°, Dolly: 1.0–2.2m
+- **Wide view**: Camera-controls orbits around the layout target (desk + monitor center), yaw ±45°, pitch -12° → 22°, dolly 2.7–4.8m.
+- **Screen view**: Focused orbit around the selected monitor surface center, yaw ±18°, pitch ±12°, dolly 1.0–2.2m.
 
-**Controllers:**
-- `DeskViewController.tsx`: OrbitControls for desk mode
-- `ScreenViewController.tsx`: OrbitControls for screen mode
-- Click monitor → enter screen mode (via raycasting + `planeProject`)
-- Press Escape → return to desk mode
+**Controller:**
+- `CameraRigController.tsx`: Unified camera-controls rig that configures clamps per view, listens to `cameraSlice`, and animates transitions (`setLookAt`) when switching views.
+- Click monitor → enter Screen view (via existing surface detection).
+- Press Escape → return to Wide view.
 
 #### 5. Validation System
 `useLayoutValidation.ts` runs checks on every layout change:

@@ -1,22 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
-import { CAMERA_CLAMPS, useCamera } from "@/state/cameraSlice";
+import { useCamera } from "@/state/cameraSlice";
+import { cameraViews } from "@/camera/cameraViews";
 import type { SurfaceMeta } from "@/state/surfaceMetaStore";
-import type { PropBounds } from "@/state/propBoundsStore";
-import { useSurface, useSurfaceMeta } from "./useSurfaces";
-import { usePropBounds } from "./usePropBounds";
-import { usePropScale } from "./usePropScale";
-import { useLayoutOverridesState } from "./useLayoutOverrides";
+import type { GenericPropBounds } from "@/state/genericPropsStore";
+import { useSurfaceMeta, useSurfacesByKind } from "./useSurfaces";
 import {
   setLayoutState,
-  peekLayoutState,
   type LayoutFrame,
-  type MonitorPlacement,
   type LayoutPose,
 } from "@/state/layoutFrameStore";
 import { useLayoutFrameState } from "./useLayoutFrame";
-import type { Surface } from "@/canvas/surfaces";
+import { getGenericPropsSnapshot } from "@/state/genericPropsStore";
+import { useGenericProps } from "./useGenericProps";
 
 const DEFAULT_CAMERA_FOV_DEG = 48;
 const CAMERA_RADIUS_MARGIN = 1.12;
@@ -25,10 +22,7 @@ const CAMERA_DEFAULT_ELEVATION_DEG = 18;
 const CAMERA_TARGET_FORWARD_OFFSET = 0.05;
 const CAMERA_TARGET_RIGHT_OFFSET = -0.08;
 const CAMERA_TARGET_UP_OFFSET = 0.18;
-const MONITOR_CLEARANCE = 0.0015;
-const EDGE_MARGIN = 0.012;
 const SNAP_EPS = 1e-6;
-const STATE_EPS = 1e-4;
 
 function toVec3(tuple: readonly number[]) {
   return new THREE.Vector3(tuple[0], tuple[1], tuple[2]);
@@ -36,62 +30,6 @@ function toVec3(tuple: readonly number[]) {
 
 function toTuple(vec: THREE.Vector3): [number, number, number] {
   return [vec.x, vec.y, vec.z];
-}
-
-function cloneMeta(meta: SurfaceMeta | null): SurfaceMeta | null {
-  if (!meta) return null;
-  return {
-    center: [...meta.center] as SurfaceMeta["center"],
-    normal: [...meta.normal] as SurfaceMeta["normal"],
-    uDir: [...meta.uDir] as SurfaceMeta["uDir"],
-    vDir: [...meta.vDir] as SurfaceMeta["vDir"],
-    extents: { ...meta.extents },
-  };
-}
-
-function cloneBounds(bounds: PropBounds | null): PropBounds | null {
-  if (!bounds) return null;
-  return {
-    min: [...bounds.min] as PropBounds["min"],
-    max: [...bounds.max] as PropBounds["max"],
-  };
-}
-
-function hasNonUnitScale(scale: readonly number[], epsilon = 1e-4) {
-  return (
-    Math.abs(scale[0] - 1) > epsilon ||
-    Math.abs(scale[1] - 1) > epsilon ||
-    Math.abs(scale[2] - 1) > epsilon
-  );
-}
-
-function scaleBoundsFromFoot(bounds: PropBounds, scale: readonly number[]): PropBounds {
-  const anchorX = (bounds.min[0] + bounds.max[0]) / 2;
-  const anchorY = bounds.min[1];
-  const anchorZ = (bounds.min[2] + bounds.max[2]) / 2;
-
-  const scaleAxis = (value: number, anchor: number, factor: number) => anchor + (value - anchor) * factor;
-
-  return {
-    min: [
-      scaleAxis(bounds.min[0], anchorX, scale[0]),
-      scaleAxis(bounds.min[1], anchorY, scale[1]),
-      scaleAxis(bounds.min[2], anchorZ, scale[2]),
-    ],
-    max: [
-      scaleAxis(bounds.max[0], anchorX, scale[0]),
-      scaleAxis(bounds.max[1], anchorY, scale[1]),
-      scaleAxis(bounds.max[2], anchorZ, scale[2]),
-    ],
-  };
-}
-
-function boundsBottomCenter(bounds: PropBounds): THREE.Vector3 {
-  return new THREE.Vector3(
-    (bounds.min[0] + bounds.max[0]) / 2,
-    bounds.min[1],
-    (bounds.min[2] + bounds.max[2]) / 2,
-  );
 }
 
 function collectCorners(box: THREE.Box3) {
@@ -112,7 +50,7 @@ function collectCorners(box: THREE.Box3) {
   return corners;
 }
 
-function boundsToBox(bounds: PropBounds) {
+function boundsToBox(bounds: GenericPropBounds) {
   return new THREE.Box3(
     new THREE.Vector3(bounds.min[0], bounds.min[1], bounds.min[2]),
     new THREE.Vector3(bounds.max[0], bounds.max[1], bounds.max[2]),
@@ -128,80 +66,11 @@ function boundingRadius(box: THREE.Box3, center: THREE.Vector3) {
   return max;
 }
 
-function spanAlongAxis(bounds: PropBounds, axis: THREE.Vector3) {
-  const box = boundsToBox(bounds);
-  const corners = collectCorners(box);
-  let min = Infinity;
-  let max = -Infinity;
-  for (const corner of corners) {
-    const dot = corner.dot(axis);
-    min = Math.min(min, dot);
-    max = Math.max(max, dot);
-  }
-  return { min, max };
-}
-
-function boundsCenter(bounds: PropBounds) {
-  return new THREE.Vector3(
-    (bounds.min[0] + bounds.max[0]) / 2,
-    (bounds.min[1] + bounds.max[1]) / 2,
-    (bounds.min[2] + bounds.max[2]) / 2,
-  );
-}
-
-function extremalPoint(bounds: PropBounds, direction: THREE.Vector3, pick: "min" | "max") {
-  const box = boundsToBox(bounds);
-  const corners = collectCorners(box);
-  const best = corners[0].clone();
-  let bestDot = best.dot(direction);
-  for (const corner of corners) {
-    const dot = corner.dot(direction);
-    if (pick === "min") {
-      if (dot < bestDot) {
-        bestDot = dot;
-        best.copy(corner);
-      }
-    } else if (dot > bestDot) {
-      bestDot = dot;
-      best.copy(corner);
-    }
-  }
-  return best;
-}
-
-function projectOntoPlane(vec: THREE.Vector3, normal: THREE.Vector3) {
-  const n = normal.clone().normalize();
-  return vec.clone().sub(n.multiplyScalar(vec.dot(n)));
-}
-
-function signedAngleAroundAxis(from: THREE.Vector3, to: THREE.Vector3, axis: THREE.Vector3) {
-  const cross = new THREE.Vector3().crossVectors(from, to);
-  const dot = THREE.MathUtils.clamp(from.dot(to), -1, 1);
-  return Math.atan2(cross.dot(axis), dot);
-}
-
 function clampScalar(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function snapScalar(value: number) {
-  return Math.abs(value) < SNAP_EPS ? 0 : Number(value.toFixed(6));
-}
-
-function placementsClose(a: MonitorPlacement | null, b: MonitorPlacement | null) {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return (
-    Math.abs(a.position[0] - b.position[0]) <= STATE_EPS &&
-    Math.abs(a.position[1] - b.position[1]) <= STATE_EPS &&
-    Math.abs(a.position[2] - b.position[2]) <= STATE_EPS &&
-    Math.abs(a.rotation[0] - b.rotation[0]) <= STATE_EPS &&
-    Math.abs(a.rotation[1] - b.rotation[1]) <= STATE_EPS &&
-    Math.abs(a.rotation[2] - b.rotation[2]) <= STATE_EPS
-  );
-}
-
-function buildLayoutFrame(meta: SurfaceMeta, bounds: PropBounds): LayoutFrame {
+function buildLayoutFrame(meta: SurfaceMeta, bounds: GenericPropBounds): LayoutFrame {
   const up = toVec3(meta.normal).normalize();
   const right = toVec3(meta.uDir).normalize();
   const forward = new THREE.Vector3().crossVectors(right, up).normalize();
@@ -222,16 +91,19 @@ function buildLayoutFrame(meta: SurfaceMeta, bounds: PropBounds): LayoutFrame {
 
 function solveCamera(
   frame: LayoutFrame,
-  deskBounds: PropBounds,
-  monitorBounds: PropBounds | null,
+  deskBounds: GenericPropBounds,
 ): { target: [number, number, number]; pose: LayoutPose } {
   const forward = toVec3(frame.forward);
   const right = toVec3(frame.right);
   const up = toVec3(frame.up);
 
+  // Include all generic props in camera framing
   const combinedBounds = boundsToBox(deskBounds);
-  if (monitorBounds) {
-    combinedBounds.union(boundsToBox(monitorBounds));
+  const genericProps = getGenericPropsSnapshot();
+  for (const prop of genericProps) {
+    if (prop.bounds) {
+      combinedBounds.union(boundsToBox(prop.bounds));
+    }
   }
   const contentCenter = combinedBounds.getCenter(new THREE.Vector3());
 
@@ -267,7 +139,7 @@ function solveCamera(
   const radius = boundingRadius(combinedBounds, target);
   const fov = THREE.MathUtils.degToRad(DEFAULT_CAMERA_FOV_DEG);
   let dolly = radius <= 0 ? 3.6 : (radius / Math.tan(fov / 2)) * CAMERA_RADIUS_MARGIN;
-  const { min, max } = CAMERA_CLAMPS.desk.dolly;
+  const { min, max } = cameraViews.wide.clamps.dolly;
   dolly = clampScalar(dolly, min, max);
 
   return {
@@ -280,99 +152,6 @@ function solveCamera(
   };
 }
 
-function solveMonitor(
-  frame: LayoutFrame,
-  deskSurface: Surface | null,
-  monitorMeta: SurfaceMeta | null,
-  currentBounds: PropBounds | null,
-  baseMeta: SurfaceMeta | null,
-  baseBounds: PropBounds | null,
-  manualOffsets?: { lateral: number; depth: number },
-  scaledBounds: PropBounds | null = null,
-): MonitorPlacement | null {
-  const up = toVec3(frame.up);
-  const right = toVec3(frame.right);
-  const forward = toVec3(frame.forward);
-
-  const deskTop = deskSurface
-    ? new THREE.Vector3(deskSurface.origin[0], deskSurface.origin[1], deskSurface.origin[2])
-    : new THREE.Vector3(frame.center[0], frame.center[1], frame.center[2]);
-  const desiredPlane = deskTop.dot(up) + MONITOR_CLEARANCE;
-
-  const referenceBounds = scaledBounds ?? baseBounds ?? currentBounds;
-  if (!referenceBounds && !baseMeta) {
-    return null;
-  }
-
-  let liftDelta = 0;
-  if (referenceBounds) {
-    const bottom = extremalPoint(referenceBounds, up, "min");
-    liftDelta = desiredPlane - bottom.dot(up);
-  } else if (baseMeta) {
-    const center = new THREE.Vector3(baseMeta.center[0], baseMeta.center[1], baseMeta.center[2]);
-    const baseNormal = toVec3(baseMeta.normal).normalize();
-    const bottom = center.clone().sub(baseNormal.multiplyScalar(baseMeta.extents.thickness / 2));
-    liftDelta = desiredPlane - bottom.dot(up);
-  }
-
-  const manualLateral = manualOffsets?.lateral ?? 0;
-  const manualDepth = manualOffsets?.depth ?? 0;
-
-  const deskCenter = boundsCenter(frame.bounds);
-  const boundsForAlignment = scaledBounds ?? referenceBounds ?? baseBounds ?? currentBounds;
-  let lateralDelta = manualLateral;
-  let depthDelta = manualDepth;
-  if (boundsForAlignment) {
-    const monitorCenter = boundsCenter(boundsForAlignment);
-    lateralDelta += deskCenter.clone().sub(monitorCenter).dot(right);
-    depthDelta += deskCenter.clone().sub(monitorCenter).dot(forward);
-
-    const deskSpanRight = spanAlongAxis(frame.bounds, right);
-    const monitorSpanRight = spanAlongAxis(boundsForAlignment, right);
-    const halfDeskRight = (deskSpanRight.max - deskSpanRight.min) / 2;
-    const halfMonitorRight = (monitorSpanRight.max - monitorSpanRight.min) / 2;
-    const limitRight = Math.max(0, halfDeskRight - halfMonitorRight - EDGE_MARGIN);
-    lateralDelta = clampScalar(lateralDelta, -limitRight, limitRight);
-
-    const deskSpanForward = spanAlongAxis(frame.bounds, forward);
-    const monitorSpanForward = spanAlongAxis(boundsForAlignment, forward);
-    const halfDeskForward = (deskSpanForward.max - deskSpanForward.min) / 2;
-    const halfMonitorForward = (monitorSpanForward.max - monitorSpanForward.min) / 2;
-    const limitForward = Math.max(0, halfDeskForward - halfMonitorForward - EDGE_MARGIN);
-    depthDelta = clampScalar(depthDelta, -limitForward, limitForward);
-  }
-
-  liftDelta = snapScalar(liftDelta);
-  lateralDelta = snapScalar(lateralDelta);
-  depthDelta = snapScalar(depthDelta);
-
-  const lift = up.clone().multiplyScalar(liftDelta);
-  const lateral = right.clone().multiplyScalar(lateralDelta);
-  const depth = forward.clone().multiplyScalar(depthDelta);
-
-  const position = lift.add(lateral).add(depth);
-
-  const normalSource = baseMeta ?? monitorMeta;
-  let yaw = 0;
-  if (normalSource) {
-    const monitorNormal = toVec3(normalSource.normal).normalize();
-    const projectedMonitor = projectOntoPlane(monitorNormal, up);
-    const projectedForward = projectOntoPlane(forward, up);
-    if (projectedMonitor.lengthSq() > SNAP_EPS && projectedForward.lengthSq() > SNAP_EPS) {
-      projectedMonitor.normalize();
-      projectedForward.normalize();
-      yaw = signedAngleAroundAxis(projectedMonitor, projectedForward, up);
-    }
-  }
-
-  yaw = snapScalar(yaw);
-
-  return {
-    position: toTuple(position),
-    rotation: [0, yaw, 0],
-  };
-}
-
 function posesApproximatelyEqual(a: LayoutPose, b: LayoutPose, eps = 1e-3) {
   return (
     Math.abs(a.yaw - b.yaw) <= eps &&
@@ -382,34 +161,18 @@ function posesApproximatelyEqual(a: LayoutPose, b: LayoutPose, eps = 1e-3) {
 }
 
 export function useAutoLayout() {
-  const overrides = useLayoutOverridesState();
-  const deskSurface = useSurface("desk");
-  const deskMeta = useSurfaceMeta("desk");
-  const deskBounds = usePropBounds("desk");
+  const genericProps = useGenericProps();
 
-  const monitorMeta = useSurfaceMeta("monitor1");
-  const monitorBounds = usePropBounds("monitor1");
-  const initialMonitorFootRef = useRef<THREE.Vector3 | null>(null);
-  const monitorScale = usePropScale("monitor1");
-  const [monitorScaleX, monitorScaleY, monitorScaleZ] = monitorScale;
+  // Find desk by querying generic props for desk catalog ID
+  const deskProp = useMemo(() => {
+    return genericProps.find(p => p.catalogId === 'desk-default');
+  }, [genericProps]);
 
-  const initialMonitorMetaRef = useRef<SurfaceMeta | null>(null);
-  const initialMonitorBoundsRef = useRef<PropBounds | null>(null);
-
-  useEffect(() => {
-    if (!initialMonitorMetaRef.current && monitorMeta) {
-      initialMonitorMetaRef.current = cloneMeta(monitorMeta);
-    }
-  }, [monitorMeta]);
-
-  useEffect(() => {
-    if (!initialMonitorBoundsRef.current && monitorBounds) {
-      initialMonitorBoundsRef.current = cloneBounds(monitorBounds);
-      if (!initialMonitorFootRef.current) {
-        initialMonitorFootRef.current = boundsBottomCenter(monitorBounds);
-      }
-    }
-  }, [monitorBounds]);
+  // Get desk surface by kind (reactively subscribes to surface changes)
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskSurfaceId = deskSurfaces[0]?.id;
+  const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
+  const deskBounds = deskProp?.bounds ?? null;
 
   useEffect(() => {
     if (!deskMeta || !deskBounds) {
@@ -418,86 +181,36 @@ export function useAutoLayout() {
         frame: null,
         cameraTarget: null,
         deskPose: null,
-        monitorPlacement: null,
       });
       return;
     }
 
     const frame = buildLayoutFrame(deskMeta, deskBounds);
-    const cameraSolution = solveCamera(frame, deskBounds, monitorBounds ?? null);
-
-    const frameRight = toVec3(frame.right);
-    const frameForward = toVec3(frame.forward);
-    const monitorScaleVec: [number, number, number] = [monitorScaleX, monitorScaleY, monitorScaleZ];
-    const baseMonitorBounds = initialMonitorBoundsRef.current;
-    const scaledMonitorBounds = baseMonitorBounds && hasNonUnitScale(monitorScaleVec)
-      ? scaleBoundsFromFoot(baseMonitorBounds, monitorScaleVec)
-      : baseMonitorBounds;
-
-    const baseFoot = initialMonitorFootRef.current ?? (baseMonitorBounds ? boundsBottomCenter(baseMonitorBounds) : null);
-    const scaledFoot = scaledMonitorBounds ? boundsBottomCenter(scaledMonitorBounds) : baseFoot;
-    const footDelta = baseFoot && scaledFoot ? scaledFoot.clone().sub(baseFoot) : new THREE.Vector3(0, 0, 0);
-    const footLateralOffset = footDelta.dot(frameRight);
-    const footDepthOffset = footDelta.dot(frameForward);
-
-    const placementCandidate = solveMonitor(
-      frame,
-      deskSurface,
-      monitorMeta,
-      monitorBounds ?? null,
-      initialMonitorMetaRef.current,
-      baseMonitorBounds,
-      {
-        lateral: overrides.monitorLateral - footLateralOffset,
-        depth: overrides.monitorDepth - footDepthOffset,
-      },
-      scaledMonitorBounds,
-    );
-
-    const prevLayout = peekLayoutState();
-    let nextPlacement: MonitorPlacement | null = placementCandidate;
-    if (!nextPlacement && prevLayout.monitorPlacement) {
-      nextPlacement = prevLayout.monitorPlacement;
-    } else if (placementsClose(nextPlacement, prevLayout.monitorPlacement)) {
-      nextPlacement = prevLayout.monitorPlacement;
-    }
+    const cameraSolution = solveCamera(frame, deskBounds);
 
     setLayoutState({
       status: "ready",
       frame,
       cameraTarget: cameraSolution.target,
       deskPose: cameraSolution.pose,
-      monitorPlacement: nextPlacement ?? null,
     });
 
     const cameraStore = useCamera.getState();
-    const previousDeskDefault = cameraStore.defaults.desk;
-    if (!posesApproximatelyEqual(previousDeskDefault, cameraSolution.pose, 1e-4)) {
-      cameraStore.setDefaultPose("desk", cameraSolution.pose);
-      if (cameraStore.mode.kind === "desk") {
+    const previousWideDefault = cameraStore.defaults.wide;
+    if (!posesApproximatelyEqual(previousWideDefault, cameraSolution.pose, 1e-4)) {
+      cameraStore.setDefaultPose("wide", cameraSolution.pose);
+      if (cameraStore.mode.kind === "wide") {
         const currentPose: LayoutPose = {
           yaw: cameraStore.yaw,
           pitch: cameraStore.pitch,
           dolly: cameraStore.dolly,
         };
-        if (posesApproximatelyEqual(currentPose, previousDeskDefault, 2e-3)) {
+        if (posesApproximatelyEqual(currentPose, previousWideDefault, 2e-3)) {
           cameraStore.setPose(cameraSolution.pose);
         }
       }
     }
-  }, [
-    deskMeta,
-    deskBounds,
-    deskSurface,
-    monitorMeta,
-    monitorBounds,
-    overrides.monitorLateral,
-    overrides.monitorDepth,
-    monitorScaleX,
-    monitorScaleY,
-    monitorScaleZ,
-  ]);
+  }, [deskMeta, deskBounds]);
 
   return useLayoutFrameState();
 }
-

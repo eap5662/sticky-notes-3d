@@ -5,7 +5,6 @@ import {
   type LayoutState,
   type LayoutFrame,
   type LayoutPose,
-  type MonitorPlacement,
 } from "@/state/layoutFrameStore";
 
 const getClientSnapshot = () => getLayoutState();
@@ -33,8 +32,4 @@ export function useLayoutCameraTarget(): [number, number, number] | null {
 
 export function useLayoutDeskPose(): LayoutPose | null {
   return useLayoutFrameState().deskPose;
-}
-
-export function useMonitorPlacement(): MonitorPlacement | null {
-  return useLayoutFrameState().monitorPlacement;
 }
