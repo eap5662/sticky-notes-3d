@@ -25,7 +25,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     id: 'desk-default',
     label: 'Desk',
     url: '/models/DeskTopPlane.glb',
-    anchor: { type: 'bbox', align: { x: 'center', y: 'max', z: 'center' } },
+    anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     surfaces: [
       {
         id: createSurfaceId('desk-surface'),
