@@ -102,7 +102,7 @@ export function useDockConstraints() {
     // Check if frame or desk yaw actually changed (avoid thrashing)
     if (prevFrameRef.current && prevDeskYawRef.current === deskYawRad) {
       const prev = prevFrameRef.current;
-      const unchanged =
+      const orientationUnchanged =
         prev.up[0] === frame.up[0] &&
         prev.up[1] === frame.up[1] &&
         prev.up[2] === frame.up[2] &&
@@ -112,8 +112,12 @@ export function useDockConstraints() {
         prev.forward[0] === frame.forward[0] &&
         prev.forward[1] === frame.forward[1] &&
         prev.forward[2] === frame.forward[2];
+      const centerUnchanged =
+        prev.center[0] === frame.center[0] &&
+        prev.center[1] === frame.center[1] &&
+        prev.center[2] === frame.center[2];
 
-      if (unchanged) {
+      if (orientationUnchanged && centerUnchanged) {
         return;
       }
     }

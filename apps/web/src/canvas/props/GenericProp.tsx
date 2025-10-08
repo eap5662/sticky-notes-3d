@@ -38,7 +38,10 @@ const HIGHLIGHT_MINOR_RADIUS_SCALE = 0.55;
 const HIGHLIGHT_MAJOR_RADIUS_SCALE = 1.1;
 const DESK_CLEARANCE = 0.015;
 const CLEARANCE_EPSILON = 1e-4;
-const MAX_DESK_DRAG_STEP = 0.04; // Limit desk translation per pointer event (~4cm)
+const DESK_DRIVE_BASE_SPEED = 0.002; // meters per frame when just outside stop radius
+const DESK_DRIVE_GAIN = 0.048; // additional speed per meter of pointer offset
+const DESK_DRIVE_MAX_STEP = 0.024; // cap desk travel per frame (~2.4cm)
+const DESK_DRIVE_STOP_RADIUS = 0.02; // pointer within 2cm of center releases drag
 
 type GenericPropInstanceProps = {
   prop: GenericProp;
@@ -65,6 +68,10 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const prevDeskHeightRef = useRef<number | null>(null);
   const positionBeforeDragRef = useRef<Vec3 | null>(null);
   const latestPositionRef = useRef<Vec3>(prop.position);
+  const deskCenterOffsetRef = useRef<Vec3 | null>(null);
+  const deskCenterRef = useRef<Vec3 | null>(null);
+  const deskPointerPointRef = useRef<Vec3 | null>(null);
+  const pointerCaptureTargetRef = useRef<Element | null>(null);
 
   const pushAction = useUndoHistoryStore((s) => s.push);
 
@@ -110,6 +117,32 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     if (!deskSurface) return null;
     return deskSurface.origin[1];
   }, [deskSurface]);
+
+  useEffect(() => {
+    if (prop.catalogId !== 'desk-default') {
+      deskCenterOffsetRef.current = null;
+      deskCenterRef.current = null;
+      return;
+    }
+    if (prop.bounds) {
+      const center = [
+        (prop.bounds.min[0] + prop.bounds.max[0]) / 2,
+        (prop.bounds.min[1] + prop.bounds.max[1]) / 2,
+        (prop.bounds.min[2] + prop.bounds.max[2]) / 2,
+      ] as Vec3;
+      const offset = [
+        center[0] - prop.position[0],
+        center[1] - prop.position[1],
+        center[2] - prop.position[2],
+      ] as Vec3;
+      deskCenterOffsetRef.current = offset;
+      deskCenterRef.current = center;
+    } else {
+      const fallback = [prop.position[0], prop.position[1], prop.position[2]] as Vec3;
+      deskCenterOffsetRef.current = [0, 0, 0] as Vec3;
+      deskCenterRef.current = fallback;
+    }
+  }, [prop.catalogId, prop.bounds, prop.position]);
 
   const propMinY = prop.bounds?.min[1] ?? null;
   const currentPositionY = prop.position[1];
@@ -200,52 +233,74 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       dragActiveRef.current = true;
       pointerIdRef.current = event.pointerId;
       grabOffsetRef.current.set(prop.position[0], prop.position[1], prop.position[2]).sub(intersection);
+      if (prop.catalogId === 'desk-default') {
+        deskPointerPointRef.current = [intersection.x, intersection.y, intersection.z];
+      }
 
       // Capture position at start of drag for undo
       positionBeforeDragRef.current = prop.position;
 
       if (event.target && 'setPointerCapture' in event.target) {
         (event.target as Element).setPointerCapture(event.pointerId);
+        pointerCaptureTargetRef.current = event.target as Element;
+      } else {
+        pointerCaptureTargetRef.current = null;
       }
     },
     [computeIntersection, prop.id, prop.position, prop.status, prop.catalogId, canDrag, deskSurface],
   );
 
-  const finishDrag = useCallback((event: ThreeEvent<PointerEvent>) => {
-    if (!dragActiveRef.current) {
-      unlockCameraOrbit();
-      return;
-    }
-    if (pointerIdRef.current !== null && pointerIdRef.current !== event.pointerId) return;
-
-    event.stopPropagation();
-    event.nativeEvent.stopImmediatePropagation?.();
-
-    // Push move action to undo stack if position changed
-    if (positionBeforeDragRef.current) {
-      const before = positionBeforeDragRef.current;
-      const after = prop.position;
-
-      // Only push if position actually changed
-      if (before[0] !== after[0] || before[1] !== after[1] || before[2] !== after[2]) {
-        pushAction({
-          type: 'move',
-          propId: prop.id,
-          before,
-          after,
-        });
+  const finishDrag = useCallback(
+    (event?: ThreeEvent<PointerEvent>) => {
+      if (!dragActiveRef.current) {
+        unlockCameraOrbit();
+        return;
       }
-      positionBeforeDragRef.current = null;
-    }
 
-    dragActiveRef.current = false;
-    pointerIdRef.current = null;
+      if (event) {
+        if (pointerIdRef.current !== null && pointerIdRef.current !== event.pointerId) {
+          return;
+        }
+        event.stopPropagation();
+        event.nativeEvent.stopImmediatePropagation?.();
+      }
 
-    if (event.target && 'releasePointerCapture' in event.target) {
-      (event.target as Element).releasePointerCapture(event.pointerId);
-    }
-    unlockCameraOrbit();
-  }, [prop.id, prop.position, pushAction]);
+      if (positionBeforeDragRef.current) {
+        const before = positionBeforeDragRef.current;
+        const after = latestPositionRef.current;
+        if (
+          after &&
+          (before[0] !== after[0] || before[1] !== after[1] || before[2] !== after[2])
+        ) {
+          pushAction({
+            type: 'move',
+            propId: prop.id,
+            before: [before[0], before[1], before[2]] as Vec3,
+            after: [after[0], after[1], after[2]] as Vec3,
+          });
+        }
+        positionBeforeDragRef.current = null;
+      }
+
+      dragActiveRef.current = false;
+
+      const pointerId = pointerIdRef.current;
+      pointerIdRef.current = null;
+
+      const captureTarget = pointerCaptureTargetRef.current;
+      pointerCaptureTargetRef.current = null;
+      if (captureTarget && pointerId !== null && 'releasePointerCapture' in captureTarget) {
+        captureTarget.releasePointerCapture(pointerId);
+      } else if (event?.target && 'releasePointerCapture' in event.target) {
+        (event.target as Element).releasePointerCapture(event.pointerId);
+      }
+
+      deskPointerPointRef.current = null;
+      setGenericPropStatus(prop.id, 'placed');
+      unlockCameraOrbit();
+    },
+    [prop.id, pushAction],
+  );
 
   const handlePointerMove = useCallback(
     (event: ThreeEvent<PointerEvent>) => {
@@ -260,20 +315,56 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         return;
       }
 
-      const desired = pointerPoint.clone().add(grabOffsetRef.current);
-      constrainHeight(desired);
       if (prop.catalogId === 'desk-default') {
         const current = latestPositionRef.current;
-        const deltaX = desired.x - current[0];
-        const deltaZ = desired.z - current[2];
-        const planarStep = Math.hypot(deltaX, deltaZ);
-        if (planarStep > MAX_DESK_DRAG_STEP) {
-          const scale = MAX_DESK_DRAG_STEP / planarStep;
-          desired.x = current[0] + deltaX * scale;
-          desired.z = current[2] + deltaZ * scale;
-          desired.y = current[1];
+        const centerOffset = (deskCenterOffsetRef.current ?? [0, 0, 0]) as Vec3;
+        const deskCenter = (deskCenterRef.current ??
+          [
+            current[0] + centerOffset[0],
+            current[1] + centerOffset[1],
+            current[2] + centerOffset[2],
+          ]) as Vec3;
+        const offsetX = pointerPoint.x - deskCenter[0];
+        const offsetZ = pointerPoint.z - deskCenter[2];
+        const planarDistance = Math.hypot(offsetX, offsetZ);
+
+        if (planarDistance <= DESK_DRIVE_STOP_RADIUS) {
+          finishDrag(event);
+          return;
         }
+
+        const dirX = offsetX / planarDistance;
+        const dirZ = offsetZ / planarDistance;
+        const step = Math.min(
+          DESK_DRIVE_MAX_STEP,
+          DESK_DRIVE_BASE_SPEED + DESK_DRIVE_GAIN * planarDistance,
+        );
+
+        const nextTuple: Vec3 = [
+          current[0] + dirX * step,
+          current[1],
+          current[2] + dirZ * step,
+        ];
+
+        latestPositionRef.current = nextTuple;
+        const nextCenter: Vec3 = [
+          nextTuple[0] + centerOffset[0],
+          nextTuple[1] + centerOffset[1],
+          nextTuple[2] + centerOffset[2],
+        ];
+        deskCenterRef.current = nextCenter;
+
+        setGenericPropPosition(prop.id, nextTuple);
+        grabOffsetRef.current.set(
+          nextTuple[0] - pointerPoint.x,
+          nextTuple[1] - pointerPoint.y,
+          nextTuple[2] - pointerPoint.z,
+        );
+        return;
       }
+
+      const desired = pointerPoint.clone().add(grabOffsetRef.current);
+      constrainHeight(desired);
       const nextTuple: Vec3 = [desired.x, desired.y, desired.z];
       latestPositionRef.current = nextTuple;
       setGenericPropPosition(prop.id, nextTuple);
@@ -283,7 +374,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         nextTuple[2] - pointerPoint.z,
       );
     },
-    [computeIntersection, prop.id, constrainHeight, prop.catalogId],
+    [computeIntersection, prop.id, constrainHeight, prop.catalogId, finishDrag],
   );
 
   const handlePointerLeave = useCallback(
@@ -379,7 +470,76 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
 
   useEffect(() => {
     latestPositionRef.current = prop.position;
+    if (prop.catalogId === 'desk-default') {
+      const offset = deskCenterOffsetRef.current;
+      if (offset) {
+        deskCenterRef.current = [
+          prop.position[0] + offset[0],
+          prop.position[1] + offset[1],
+          prop.position[2] + offset[2],
+        ] as Vec3;
+      }
+    }
   }, [prop.position]);
+
+  useEffect(() => {
+    if (prop.catalogId !== 'desk-default') return;
+    if (prop.status !== 'dragging') return;
+
+    const interval = window.setInterval(() => {
+      if (!dragActiveRef.current) return;
+      const pointerPoint = deskPointerPointRef.current;
+      if (!pointerPoint) return;
+
+      const current = latestPositionRef.current;
+      const centerOffset = (deskCenterOffsetRef.current ?? [0, 0, 0]) as Vec3;
+      const deskCenter = (deskCenterRef.current ??
+        [
+          current[0] + centerOffset[0],
+          current[1] + centerOffset[1],
+          current[2] + centerOffset[2],
+        ]) as Vec3;
+
+      const offsetX = pointerPoint[0] - deskCenter[0];
+      const offsetZ = pointerPoint[2] - deskCenter[2];
+      const planarDistance = Math.hypot(offsetX, offsetZ);
+
+      if (planarDistance <= DESK_DRIVE_STOP_RADIUS) {
+        finishDrag();
+        return;
+      }
+
+      const dirX = offsetX / planarDistance;
+      const dirZ = offsetZ / planarDistance;
+      const step = Math.min(
+        DESK_DRIVE_MAX_STEP,
+        DESK_DRIVE_BASE_SPEED + DESK_DRIVE_GAIN * planarDistance,
+      );
+
+      const nextTuple: Vec3 = [
+        current[0] + dirX * step,
+        current[1],
+        current[2] + dirZ * step,
+      ];
+
+      latestPositionRef.current = nextTuple;
+      const nextCenter: Vec3 = [
+        nextTuple[0] + centerOffset[0],
+        nextTuple[1] + centerOffset[1],
+        nextTuple[2] + centerOffset[2],
+      ];
+      deskCenterRef.current = nextCenter;
+
+      setGenericPropPosition(prop.id, nextTuple);
+      grabOffsetRef.current.set(
+        nextTuple[0] - pointerPoint[0],
+        nextTuple[1] - pointerPoint[1],
+        nextTuple[2] - pointerPoint[2],
+      );
+    }, 250);
+
+    return () => window.clearInterval(interval);
+  }, [prop.catalogId, prop.status, finishDrag, prop.id]);
 
   const highlightData = useMemo(() => {
     if (!prop.bounds) {
