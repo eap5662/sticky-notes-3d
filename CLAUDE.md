@@ -139,15 +139,35 @@ SceneRoot reads layoutFrameStore → applies transforms to props
 ```
 
 #### 4. Camera System
-Two views with distinct behavior and clamps:
+**⚠️ CRITICAL: Read `docs/camera-system-technical-guide.md` for complete implementation details**
 
-- **Wide view**: Camera-controls orbits around the layout target (desk + monitor center), yaw ±45°, pitch -12° → 22°, dolly 2.7–4.8m.
-- **Screen view**: Focused orbit around the selected monitor surface center, yaw ±18°, pitch ±12°, dolly 1.0–2.2m.
+The camera system uses **spherical coordinates** (yaw, pitch, dolly) and maintains alignment with the desk's forward vector through dynamic calculations.
 
-**Controller:**
-- `CameraRigController.tsx`: Unified camera-controls rig that configures clamps per view, listens to `cameraSlice`, and animates transitions (`setLookAt`) when switching views.
-- Click monitor → enter Screen view (via existing surface detection).
-- Press Escape → return to Wide view.
+**Two Views:**
+- **Wide view**: Desk-aligned camera positioned in front of desk (where user sits), yaw ±45° around 90° (desk-forward aligned), pitch -12° → 50°, dolly 2.7–4.8m
+- **Screen view**: Monitor-perpendicular camera with **dynamic yaw clamps** (±30° around calculated screen-facing direction), pitch -30° → 45°, dolly 0.5–3.0m
+
+**Key Mechanisms:**
+- **Desk-relative alignment**: Camera yaw calculated from desk's forward vector using quaternion rotation around desk.up axis
+- **Dynamic clamps**: Screen view yaw constraints adapt to monitor orientation (centered around `solveScreenCamera()` result)
+- **Layout frame system**: Desk surface vectors transformed from local to world space via desk Y-rotation
+- **Separate yaw/pitch**: Yaw extracted from horizontal direction only (NOT full 3D direction) to prevent geometric distortion
+
+**Critical Files:**
+- `apps/web/src/camera/cameraViews.ts` - View configurations (static clamps, defaults, target resolvers)
+- `apps/web/src/canvas/Cameras/CameraRigController.tsx` - Applies clamps, handles transitions, implements dynamic screen clamps
+- `apps/web/src/canvas/hooks/useAutoLayout.ts` - Calculates desk frame and camera poses (`solveCamera`, `solveScreenCamera`)
+
+**Usage:**
+- Click monitor → enter Screen view (camera animates to screen-perpendicular position)
+- Press Escape → return to Wide view (camera returns to desk-aligned position)
+
+**See Technical Guide** for:
+- Complete spherical coordinate system explanation
+- How desk rotation updates camera alignment
+- Dynamic clamp calculation for screen view
+- Troubleshooting common camera issues
+- Data flow diagrams
 
 #### 5. Validation System
 `useLayoutValidation.ts` runs checks on every layout change:
