@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(pnpm dev:web:*)",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "Read(//c/Users/ihelp/Downloads/**)"
     ],
     "deny": [],
     "ask": []

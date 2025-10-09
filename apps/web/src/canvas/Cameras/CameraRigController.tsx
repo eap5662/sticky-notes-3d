@@ -99,8 +99,17 @@ export default function CameraRigController() {
     if (!controls) return;
     const { clamps, pointerEnabled } = viewConfig;
 
-    controls.minAzimuthAngle = clamps.yaw.min;
-    controls.maxAzimuthAngle = clamps.yaw.max;
+    // For screen view, apply dynamic yaw clamps centered around the calculated screen pose
+    if (activeViewId === 'screen') {
+      const screenPose = defaults.screen;
+      const clampRange = (30 * Math.PI) / 180; // ±30°
+      controls.minAzimuthAngle = screenPose.yaw - clampRange;
+      controls.maxAzimuthAngle = screenPose.yaw + clampRange;
+    } else {
+      controls.minAzimuthAngle = clamps.yaw.min;
+      controls.maxAzimuthAngle = clamps.yaw.max;
+    }
+
     controls.minPolarAngle = Math.PI / 2 - clamps.pitch.max;
     controls.maxPolarAngle = Math.PI / 2 - clamps.pitch.min;
     controls.minDistance = clamps.dolly.min;
@@ -108,7 +117,7 @@ export default function CameraRigController() {
     controls.enableRotate = pointerEnabled;
     controls.enableZoom = pointerEnabled;
     controls.enablePan = false;
-  }, [viewConfig]);
+  }, [viewConfig, activeViewId, defaults]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -151,11 +160,17 @@ export default function CameraRigController() {
     const lastTarget = lastTargetRef.current;
     const targetChanged = !lastTarget || Math.hypot(target[0] - lastTarget[0], target[1] - lastTarget[1], target[2] - lastTarget[2]) > 1e-4;
 
-    if (currentView !== lastView || targetChanged) {
+    // Check if we should update camera position
+    const viewChanged = currentView !== lastView;
+    const shouldUpdate = viewChanged || targetChanged;
+
+    if (shouldUpdate) {
+      // When view changes or target changes, use the default pose for the new view
+      // Otherwise stay at current pose (user might have orbited)
       const desiredPose =
-        currentView === lastView && !targetChanged
-          ? { yaw, pitch, dolly }
-          : defaults[currentView] ?? { yaw, pitch, dolly };
+        viewChanged || targetChanged
+          ? defaults[currentView] ?? { yaw, pitch, dolly }
+          : { yaw, pitch, dolly };
 
       const [px, py, pz] = poseToPosition(target, desiredPose);
 

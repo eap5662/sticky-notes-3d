@@ -17,12 +17,13 @@ import { useGenericProps } from "./useGenericProps";
 
 const DEFAULT_CAMERA_FOV_DEG = 48;
 const CAMERA_RADIUS_MARGIN = 1.12;
-const CAMERA_DEFAULT_AZIMUTH_DEG = 24;
-const CAMERA_DEFAULT_ELEVATION_DEG = 18;
-const CAMERA_TARGET_FORWARD_OFFSET = 0.05;
-const CAMERA_TARGET_RIGHT_OFFSET = -0.08;
-const CAMERA_TARGET_UP_OFFSET = 0.18;
-const SNAP_EPS = 1e-6;
+const CAMERA_DEFAULT_AZIMUTH_DEG = 0; // No additional rotation from base camera position (camera looks from front of desk)
+const CAMERA_DEFAULT_ELEVATION_DEG = 30; // Increased from 18 for better desk surface visibility
+
+// Camera target offset adjustments (in meters) to fine-tune framing
+const CAMERA_TARGET_FORWARD_OFFSET = 0.05;  // Slight push toward monitor
+const CAMERA_TARGET_RIGHT_OFFSET = -0.08;   // Slight shift left for better centering
+const CAMERA_TARGET_UP_OFFSET = 0.18;       // Lift target above desk center for better composition
 
 function toVec3(tuple: readonly number[]) {
   return new THREE.Vector3(tuple[0], tuple[1], tuple[2]);
@@ -70,9 +71,22 @@ function clampScalar(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function buildLayoutFrame(meta: SurfaceMeta, bounds: GenericPropBounds): LayoutFrame {
-  const up = toVec3(meta.normal).normalize();
-  const right = toVec3(meta.uDir).normalize();
+function buildLayoutFrame(
+  meta: SurfaceMeta,
+  bounds: GenericPropBounds,
+  deskRotationY: number
+): LayoutFrame {
+  let up = toVec3(meta.normal).normalize();
+  let right = toVec3(meta.uDir).normalize();
+
+  // Apply desk Y-rotation to surface axes (surface meta is in local space)
+  if (deskRotationY !== 0) {
+    const rotationEuler = new THREE.Euler(0, deskRotationY, 0, 'XYZ');
+    const rotationQuat = new THREE.Quaternion().setFromEuler(rotationEuler);
+    up.applyQuaternion(rotationQuat).normalize();
+    right.applyQuaternion(rotationQuat).normalize();
+  }
+
   const forward = new THREE.Vector3().crossVectors(right, up).normalize();
   right.copy(new THREE.Vector3().crossVectors(up, forward)).normalize();
 
@@ -116,25 +130,15 @@ function solveCamera(
   const azimuth = THREE.MathUtils.degToRad(CAMERA_DEFAULT_AZIMUTH_DEG);
   const elevation = THREE.MathUtils.degToRad(CAMERA_DEFAULT_ELEVATION_DEG);
 
-  const horizontal = forward
-    .clone()
-    .multiplyScalar(-Math.cos(azimuth))
-    .add(right.clone().multiplyScalar(Math.sin(azimuth)));
+  // Camera should look from in front of desk (where user sits) back toward the monitor
+  // Negate desk.forward to get the direction FROM the monitor TOWARD the user, then rotate by azimuth
+  const azimuthQuat = new THREE.Quaternion().setFromAxisAngle(up, azimuth);
+  const horizontal = forward.clone().negate().applyQuaternion(azimuthQuat).normalize();
 
-  if (horizontal.lengthSq() <= SNAP_EPS) {
-    horizontal.copy(forward).multiplyScalar(-1);
-  } else {
-    horizontal.normalize();
-  }
-
-  const direction = horizontal
-    .clone()
-    .multiplyScalar(Math.cos(elevation))
-    .add(up.clone().multiplyScalar(Math.sin(elevation)))
-    .normalize();
-
-  const yaw = Math.atan2(direction.x, direction.z);
-  const pitch = Math.asin(direction.y);
+  // Yaw is determined by horizontal direction only (in XZ plane)
+  const yaw = Math.atan2(horizontal.x, horizontal.z);
+  // Pitch is just the elevation angle
+  const pitch = elevation;
 
   const radius = boundingRadius(combinedBounds, target);
   const fov = THREE.MathUtils.degToRad(DEFAULT_CAMERA_FOV_DEG);
@@ -150,6 +154,49 @@ function solveCamera(
       dolly,
     },
   };
+}
+
+/**
+ * Calculates optimal camera pose for viewing a screen surface head-on.
+ * Positions camera perpendicular to the screen normal, facing the screen.
+ *
+ * Note: The pose (yaw/pitch/dolly) represents spherical coordinates around the screen center.
+ * Camera will be positioned at: center + dolly * direction(yaw, pitch)
+ */
+function solveScreenCamera(meta: SurfaceMeta): LayoutPose {
+  const normal = toVec3(meta.normal);
+
+  // Camera should be positioned OPPOSITE to the screen normal
+  // (screen normal points OUT, we want camera looking IN)
+  const cameraOffset = normal.clone().negate().normalize();
+
+  // Convert camera offset direction to spherical coordinates (yaw, pitch)
+  // These are relative to the screen center as target
+  // yaw: horizontal angle (0 = +Z, π/2 = +X, -π/2 = -X, π = -Z)
+  // pitch: vertical angle (0 = horizontal, π/2 = straight up, -π/2 = straight down)
+  const yaw = Math.atan2(cameraOffset.x, cameraOffset.z);
+  const pitch = Math.asin(THREE.MathUtils.clamp(cameraOffset.y, -1, 1));
+
+  // Calculate dolly distance to frame screen nicely
+  const extents = meta.extents;
+  const screenDiagonal = Math.hypot(extents.uExtent * 2, extents.vExtent * 2);
+  const fov = THREE.MathUtils.degToRad(DEFAULT_CAMERA_FOV_DEG);
+
+  // Distance needed to frame diagonal + 20% margin
+  let dolly = screenDiagonal > 0
+    ? (screenDiagonal / 2 / Math.tan(fov / 2)) * 1.2
+    : 1.5; // Fallback if extents invalid
+
+  // Clamp to screen view constraints
+  const { min, max } = cameraViews.screen.clamps.dolly;
+  dolly = clampScalar(dolly, min, max);
+
+  // Ensure dolly is valid
+  if (!Number.isFinite(dolly) || dolly <= 0) {
+    dolly = 1.5; // Safe fallback
+  }
+
+  return { yaw, pitch, dolly };
 }
 
 function posesApproximatelyEqual(a: LayoutPose, b: LayoutPose, eps = 1e-3) {
@@ -168,13 +215,23 @@ export function useAutoLayout() {
     return genericProps.find(p => p.catalogId === 'desk-default');
   }, [genericProps]);
 
+  // Extract desk rotation Y-axis (yaw) to trigger effect when desk rotates
+  // Use primitive value to avoid reference thrashing
+  const deskRotationY = deskProp?.rotation[1] ?? 0;
+
   // Get desk surface by kind (reactively subscribes to surface changes)
   const deskSurfaces = useSurfacesByKind('desk');
   const deskSurfaceId = deskSurfaces[0]?.id;
   const deskMeta = useSurfaceMeta(deskSurfaceId ?? '');
   const deskBounds = deskProp?.bounds ?? null;
 
+  // Get screen surfaces for screen view camera defaults
+  const screenSurfaces = useSurfacesByKind('screen');
+  const screenSurfaceId = screenSurfaces[0]?.id;
+  const screenMeta = useSurfaceMeta(screenSurfaceId ?? '');
+
   useEffect(() => {
+
     if (!deskMeta || !deskBounds) {
       setLayoutState({
         status: deskMeta || deskBounds ? "pending" : "idle",
@@ -185,7 +242,7 @@ export function useAutoLayout() {
       return;
     }
 
-    const frame = buildLayoutFrame(deskMeta, deskBounds);
+    const frame = buildLayoutFrame(deskMeta, deskBounds, deskRotationY);
     const cameraSolution = solveCamera(frame, deskBounds);
 
     setLayoutState({
@@ -197,20 +254,27 @@ export function useAutoLayout() {
 
     const cameraStore = useCamera.getState();
     const previousWideDefault = cameraStore.defaults.wide;
+
+    // Always update the default pose
     if (!posesApproximatelyEqual(previousWideDefault, cameraSolution.pose, 1e-4)) {
       cameraStore.setDefaultPose("wide", cameraSolution.pose);
+
+      // If currently in wide view, always update camera to new calculated pose
+      // This ensures the camera follows desk rotations and layout changes
       if (cameraStore.mode.kind === "wide") {
-        const currentPose: LayoutPose = {
-          yaw: cameraStore.yaw,
-          pitch: cameraStore.pitch,
-          dolly: cameraStore.dolly,
-        };
-        if (posesApproximatelyEqual(currentPose, previousWideDefault, 2e-3)) {
-          cameraStore.setPose(cameraSolution.pose);
-        }
+        cameraStore.setPose(cameraSolution.pose);
       }
     }
-  }, [deskMeta, deskBounds]);
+
+    // Update screen view default pose if screen surface exists
+    if (screenMeta) {
+      const screenPose = solveScreenCamera(screenMeta);
+      const previousScreenDefault = cameraStore.defaults.screen;
+      if (!posesApproximatelyEqual(previousScreenDefault, screenPose, 1e-4)) {
+        cameraStore.setDefaultPose("screen", screenPose);
+      }
+    }
+  }, [deskMeta, deskBounds, deskRotationY, screenMeta]);
 
   return useLayoutFrameState();
 }
