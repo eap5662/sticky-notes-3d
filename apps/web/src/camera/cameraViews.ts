@@ -35,8 +35,8 @@ export const cameraViews: Record<ViewId, CameraViewConfig> = {
     id: 'wide',
     label: 'Wide View',
     clamps: {
-      yaw: { min: (60 * Math.PI) / 180, max: (120 * Math.PI) / 180 }, // ±30° around yaw=90° (aligned with desk forward)
-      pitch: { min: (-12 * Math.PI) / 180, max: (35 * Math.PI) / 180 }, // Increased max for 30° elevation
+      yaw: { min: (45 * Math.PI) / 180, max: (135 * Math.PI) / 180 }, // ±45° around yaw=90° (aligned with desk forward)
+      pitch: { min: (-12 * Math.PI) / 180, max: (50 * Math.PI) / 180 }, // Extended upward pitch for better top-down viewing
       dolly: { min: 2.7, max: 4.8 },
     },
     defaultPose: {
