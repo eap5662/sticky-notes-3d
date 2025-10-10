@@ -4,9 +4,10 @@ import { setGenericPropUniformScale, type Vec3 } from '@/state/genericPropsStore
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import { useUndoHistoryStore } from '@/state/undoHistoryStore';
+import { PROP_CATALOG } from '@/data/propCatalog';
 
-const MIN_SCALE = 0;
-const MAX_SCALE = 100;
+const MIN_USER_SCALE = 0.01; // Minimum user-visible scale (0.01x)
+const MAX_USER_SCALE = 10; // Maximum user-visible scale (10x)
 const STEP = 0.01;
 
 type PropScaleControlsProps = {
@@ -16,9 +17,11 @@ type PropScaleControlsProps = {
 type GenericTarget = {
   type: 'generic';
   id: string;
+  catalogId?: string;
   label: string;
   description: string;
   scale: number;
+  defaultScale: number;
   status: 'editing' | 'dragging' | 'placed';
 };
 
@@ -30,73 +33,121 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
 
   const target = useMemo<GenericTarget | null>(() => {
     if (!selectedGeneric) return null;
+
+    // Get defaultScale from catalog
+    const catalogEntry = selectedGeneric.catalogId
+      ? PROP_CATALOG.find(entry => entry.id === selectedGeneric.catalogId)
+      : null;
+    const defaultScale = catalogEntry?.defaultScale ?? 1;
+
     return {
       type: 'generic',
       id: selectedGeneric.id,
+      catalogId: selectedGeneric.catalogId,
       label: selectedGeneric.label ?? 'Prop',
       description: selectedGeneric.label ? `${selectedGeneric.label} (Generic)` : 'Generic prop',
       scale: selectedGeneric.scale[0],
+      defaultScale,
       status: selectedGeneric.status,
     };
   }, [selectedGeneric]);
-  const [pendingValue, setPendingValue] = useState(target?.scale ?? 1);
+  // Store the user-visible normalized scale (relative to defaultScale)
+  const [pendingValue, setPendingValue] = useState(1);
+  // Store raw input string to allow typing "0.", "0.0", etc.
+  const [inputValue, setInputValue] = useState('1');
+  const [isFocused, setIsFocused] = useState(false);
   const scaleBeforeRef = useRef<Vec3 | null>(null);
 
   const targetKey = target ? `${target.type}:${target.id}` : null;
 
+  // Helper to format display value (clean, no trailing zeros)
+  const formatDisplayValue = useCallback((value: number): string => {
+    // Round to 3 decimals, then convert to string and remove trailing zeros
+    const rounded = Number(value.toFixed(3));
+    return rounded.toString(); // Auto removes trailing zeros
+  }, []);
+
   useEffect(() => {
-    if (target) {
-      setPendingValue(target.scale);
+    if (target && !isFocused) {
+      // Only update display when not focused (don't interfere with typing)
+      // Convert absolute scale to normalized (user-visible) scale
+      const normalizedScale = target.scale / target.defaultScale;
+      const rounded = Number(normalizedScale.toFixed(3));
+      setPendingValue(rounded);
+      setInputValue(formatDisplayValue(rounded));
     }
-  }, [target?.scale, targetKey]);
+  }, [target?.scale, target?.defaultScale, targetKey, isFocused, formatDisplayValue]);
 
   const handleScaleChange = useCallback(
-    (next: number) => {
+    (userScale: number) => {
       if (!target) return;
-      // Clamp between MIN_SCALE and MAX_SCALE
-      const clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, next));
-      setPendingValue(clamped);
-      const normalized = Number(clamped.toFixed(3));
+      // Clamp user input between MIN_USER_SCALE and MAX_USER_SCALE
+      const clampedUser = Math.max(MIN_USER_SCALE, Math.min(MAX_USER_SCALE, userScale));
+      setPendingValue(clampedUser);
+
+      // Convert user scale to absolute scale by multiplying with defaultScale
+      const absoluteScale = clampedUser * target.defaultScale;
+      const normalized = Number(absoluteScale.toFixed(4));
+
       setGenericPropUniformScale(target.id, normalized);
     },
     [target],
   );
+
+  const handlePointerDown = useCallback(() => {
+    if (!selectedGeneric) return;
+    scaleBeforeRef.current = selectedGeneric.scale;
+  }, [selectedGeneric]);
 
   const handleInputChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       if (!target) return;
       const value = event.target.value;
 
-      // Allow empty input or partial numbers during typing
-      if (value === '' || value === '.' || value === '0.') {
-        setPendingValue(parseFloat(value) || 0);
+      // Always update the raw input value to allow typing
+      setInputValue(value);
+
+      // Allow empty input during typing
+      if (value === '') {
+        setPendingValue(0);
         return;
       }
 
+      // Parse the value - if valid, update pending scale
       const parsed = parseFloat(value);
-      if (!isNaN(parsed)) {
-        // Just update the pending value, don't apply scale yet
+      if (!isNaN(parsed) && parsed >= 0) {
         setPendingValue(parsed);
       }
     },
     [target],
   );
 
+  const handleInputFocus = useCallback((event: React.FocusEvent<HTMLInputElement>) => {
+    setIsFocused(true);
+    handlePointerDown();
+    // Select all text so user can replace with one keystroke
+    event.target.select();
+  }, [handlePointerDown]);
+
   const handleInputBlur = useCallback(() => {
+    setIsFocused(false);
     if (!target) return;
     // On blur, apply the scale and ensure we have a valid value
     let finalValue = pendingValue;
-    if (finalValue <= 0 || isNaN(finalValue)) {
-      finalValue = 1;
+    if (finalValue < MIN_USER_SCALE || isNaN(finalValue)) {
+      finalValue = 1; // Reset to normalized 1x (which is the defaultScale)
     }
     handleScaleChange(finalValue);
-  }, [target, pendingValue, handleScaleChange]);
+    // Update input to show clean formatted value (no trailing zeros)
+    setInputValue(formatDisplayValue(finalValue));
+  }, [target, pendingValue, handleScaleChange, formatDisplayValue]);
 
   const handleReset = useCallback(() => {
     if (!target || !selectedGeneric) return;
     const before = selectedGeneric.scale;
-    const after: Vec3 = [1, 1, 1];
-    setGenericPropUniformScale(target.id, 1);
+    // Reset to defaultScale (which appears as 1x to user)
+    const after: Vec3 = [target.defaultScale, target.defaultScale, target.defaultScale];
+    setGenericPropUniformScale(target.id, target.defaultScale);
     pushAction({
       type: 'scale',
       propId: target.id,
@@ -104,11 +155,6 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
       after,
     });
   }, [target, selectedGeneric, pushAction]);
-
-  const handlePointerDown = useCallback(() => {
-    if (!selectedGeneric) return;
-    scaleBeforeRef.current = selectedGeneric.scale;
-  }, [selectedGeneric]);
 
   const handlePointerUp = useCallback(() => {
     if (!target || !selectedGeneric || !scaleBeforeRef.current) return;
@@ -154,13 +200,13 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
           </div>
           <input
             type="number"
-            min={MIN_SCALE}
-            max={MAX_SCALE}
+            min={MIN_USER_SCALE}
+            max={MAX_USER_SCALE}
             step={STEP}
-            value={pendingValue || ''}
+            value={inputValue}
             onChange={!isDocked ? handleInputChange : undefined}
             onBlur={!isDocked ? handleInputBlur : undefined}
-            onFocus={!isDocked ? handlePointerDown : undefined}
+            onFocus={!isDocked ? handleInputFocus : undefined}
             onKeyDown={(e) => {
               // Allow Enter to apply immediately
               if (e.key === 'Enter' && !isDocked) {
@@ -170,10 +216,10 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
             }}
             disabled={isDocked}
             className={inputClass}
-            placeholder="1.000"
+            placeholder="1"
           />
           <div className="mt-2 flex items-center justify-between text-[11px] text-white/60">
-            <span className="text-white/40">Range: {MIN_SCALE}x – {MAX_SCALE}x</span>
+            <span className="text-white/40">Range: {MIN_USER_SCALE}x – {MAX_USER_SCALE}x</span>
             <button
               type="button"
               className={resetButtonClass}

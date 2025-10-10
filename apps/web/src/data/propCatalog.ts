@@ -63,78 +63,78 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
   // Generated: 2025-10-10
   // ========================================
 
-  // Simple Props (9) - Scale-corrected
+  // Simple Props (9) - Optimal scale ratios
   {
     id: 'Computer-Mouse',
     label: 'Computer Mouse',
     url: '/models/Computer-Mouse.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 2, // Too small, scale 2x
+    defaultScale: 2, // Optimal: 2x
   },
   {
     id: 'Mousepad',
     label: 'Mousepad',
     url: '/models/Mousepad.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 0.25, // Very large, scale to 1/4x
+    defaultScale: 0.15, // Optimal: 0.15x
   },
   {
     id: 'Mug-supplies',
     label: 'Mug Supplies',
     url: '/models/Mug-supplies.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    // OK, no scale needed
+    defaultScale: 1.2, // Optimal: 1.2x
   },
   {
     id: 'Notebook',
     label: 'Notebook',
     url: '/models/Notebook.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 0.1, // Extremely large, scale to 1/10x
+    defaultScale: 0.04, // Optimal: 0.04x
   },
   {
     id: 'Pen',
     label: 'Pen',
     url: '/models/Pen.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 0.05, // Huge, scale to 1/20x
+    defaultScale: 0.03, // Optimal: 0.03x
   },
   {
     id: 'Rubber-Duck',
     label: 'Rubber Duck',
     url: '/models/Rubber-Duck.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 1.5, // Scale 1.5x
+    defaultScale: 1.7, // Optimal: 1.7x
   },
   {
     id: 'Soda-Can',
     label: 'Soda Can',
     url: '/models/Soda-Can.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 0.04, // Scale to 1/25x
+    defaultScale: 0.02, // Optimal: 0.02x
   },
   {
     id: 'Sticky-notes-pad-thick',
     label: 'Sticky Notes Pad Thick',
     url: '/models/Sticky-notes-pad-thick.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 1.5, // Scale 1.5x
+    defaultScale: 1.9, // Optimal: 1.9x
   },
   {
     id: 'Tissue-Box',
     label: 'Tissue Box',
     url: '/models/Tissue-Box.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 1.5, // Scale 1.5x
+    defaultScale: 1.9, // Optimal: 1.9x
   },
 
-  // Props with Interactive Surfaces (2) - Scale-corrected
+  // Props with Interactive Surfaces (2) - Optimal scale ratios
   {
     id: 'Monitor-large',
     label: 'Monitor Large',
     url: '/models/Monitor-large.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 0.5, // Scale to 1/2x
+    defaultScale: 0.1, // Optimal: 0.1x
     surfaces: [
       {
         id: createSurfaceId('Monitor-large-screen'),
@@ -149,7 +149,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     label: 'Whiteboard1',
     url: '/models/Whiteboard1.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
-    defaultScale: 0.04, // Scale to 1/25x
+    defaultScale: 0.1, // Optimal: 0.1x
     surfaces: [
       {
         id: createSurfaceId('Whiteboard1-wall'),

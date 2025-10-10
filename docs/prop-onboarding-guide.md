@@ -230,6 +230,35 @@ Some props need to face a specific direction:
 - 180° = `3.1416`
 - -90° = `-1.5708`
 
+### Default Scale
+
+Props with incorrect sizes can specify a default spawn scale:
+
+```json
+{
+  "tiny-pen.glb": {
+    "defaultScale": 0.05  // Spawn at 5% of original size (1/20x)
+  }
+}
+```
+
+Or directly in the generated catalog entry:
+
+```typescript
+{
+  id: 'tiny-pen',
+  label: 'Pen',
+  url: '/models/tiny-pen.glb',
+  anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
+  defaultScale: 0.05, // Spawn at 5% size
+}
+```
+
+**Common scale corrections:**
+- Too small: `2.0` (2x), `1.5` (1.5x)
+- Too large: `0.5` (1/2x), `0.25` (1/4x), `0.1` (1/10x)
+- Way too large: `0.05` (1/20x), `0.04` (1/25x)
+
 ### Interactive Surfaces
 
 For props with clickable/sticky surfaces (whiteboards, tablets, monitors):
@@ -289,6 +318,8 @@ The script looks for these patterns in GLB node names:
 - ✅ `desk_top_surface`
 - ❌ `Mesh_042` (generic name, won't auto-detect)
 
+**IMPORTANT:** Surface nodes must be actual mesh geometry (not Empty objects). The system requires `mesh.isMesh` to extract bounds. If using Blender, duplicate the surface faces and parent them to the main object.
+
 ---
 
 ## Adding Named Nodes in Blender
@@ -296,15 +327,21 @@ The script looks for these patterns in GLB node names:
 For props that need interactive surfaces but don't have named nodes:
 
 1. **Open GLB in Blender**
-2. **Select the surface mesh** (the flat plane you want interactive)
-3. **Rename object** to something like:
+2. **Duplicate the surface faces** (select surface → Shift+D → P → Selection to separate)
+3. **Rename duplicated object** to something like:
    - `BoardSurface` (for whiteboards)
    - `ScreenPlane` (for tablets/monitors)
    - `DeskTopPlane` (for desks)
-4. **Export as GLB** (File → Export → glTF 2.0)
+   - `MonitorSurfacePlane` (for monitor screens)
+   - `WhiteBoardSurface` (for whiteboard surfaces)
+4. **Parent surface to main object** (select surface → Shift-select main object → Ctrl+P → Object)
+5. **Verify surface is a mesh** (not an Empty - system requires actual geometry for bounds calculation)
+6. **Export as GLB** (File → Export → glTF 2.0)
    - Format: glTF Binary (.glb)
    - Check "Apply Modifiers"
-5. **Re-run analysis** to detect the new node
+7. **Re-run analysis** to detect the new node
+
+**Why duplicate?** The surface extraction system needs mesh geometry to calculate bounds (`mesh.isMesh` check in `surfaceAdapter.ts`). Empty nodes won't work. Duplicating and parenting ensures the surface geometry works correctly even when the prop is scaled.
 
 ---
 
@@ -330,13 +367,27 @@ For props that need interactive surfaces but don't have named nodes:
 
 **Problem:** Model scale doesn't match scene scale
 
-**Solution:** In Blender, scale the model before exporting. Scene uses meters (1 unit = 1 meter).
+**Solution (Recommended):** Add `defaultScale` to catalog entry to fix spawn size:
+
+```typescript
+{
+  id: 'coffee-mug',
+  label: 'Coffee Mug',
+  url: '/models/coffee-mug.glb',
+  anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
+  defaultScale: 2.0, // Spawn at 2x size
+}
+```
+
+**Alternative:** In Blender, scale the model before exporting. Scene uses meters (1 unit = 1 meter).
 
 **Typical sizes:**
 - Coffee mug: ~0.08m (8cm) diameter
 - Keyboard: ~0.45m (45cm) wide
 - Monitor: ~0.60m (60cm) wide
 - Desk: ~1.5m (150cm) wide
+
+**Note:** Users can further adjust scale with scale controls (0x–100x numeric input) after spawning.
 
 ---
 
