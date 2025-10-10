@@ -5,8 +5,8 @@ import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import { useUndoHistoryStore } from '@/state/undoHistoryStore';
 
-const MIN_SCALE = 0.6;
-const MAX_SCALE = 1.6;
+const MIN_SCALE = 0;
+const MAX_SCALE = 100;
 const STEP = 0.01;
 
 type PropScaleControlsProps = {
@@ -53,12 +53,44 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
   const handleScaleChange = useCallback(
     (next: number) => {
       if (!target) return;
-      setPendingValue(next);
-      const normalized = Number(next.toFixed(3));
+      // Clamp between MIN_SCALE and MAX_SCALE
+      const clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, next));
+      setPendingValue(clamped);
+      const normalized = Number(clamped.toFixed(3));
       setGenericPropUniformScale(target.id, normalized);
     },
     [target],
   );
+
+  const handleInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (!target) return;
+      const value = event.target.value;
+
+      // Allow empty input or partial numbers during typing
+      if (value === '' || value === '.' || value === '0.') {
+        setPendingValue(parseFloat(value) || 0);
+        return;
+      }
+
+      const parsed = parseFloat(value);
+      if (!isNaN(parsed)) {
+        // Just update the pending value, don't apply scale yet
+        setPendingValue(parsed);
+      }
+    },
+    [target],
+  );
+
+  const handleInputBlur = useCallback(() => {
+    if (!target) return;
+    // On blur, apply the scale and ensure we have a valid value
+    let finalValue = pendingValue;
+    if (finalValue <= 0 || isNaN(finalValue)) {
+      finalValue = 1;
+    }
+    handleScaleChange(finalValue);
+  }, [target, pendingValue, handleScaleChange]);
 
   const handleReset = useCallback(() => {
     if (!target || !selectedGeneric) return;
@@ -102,7 +134,9 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
   if (!target) return null;
 
   const isDocked = target.status === 'editing' ? false : selectedGeneric?.docked ?? false;
-  const sliderClass = isDocked ? "mt-2 w-full opacity-40 cursor-not-allowed" : "mt-2 w-full";
+  const inputClass = isDocked
+    ? "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed"
+    : "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white focus:border-white/50 focus:outline-none";
   const resetButtonClass = isDocked
     ? "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide opacity-40 cursor-not-allowed"
     : "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10";
@@ -116,32 +150,38 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
 
         <div className="mt-4">
           <div className="flex items-center justify-between text-xs uppercase tracking-wide text-white/70">
-            <span>Scale</span>
-            <span>{pendingValue.toFixed(2)}x</span>
+            <span>Scale Multiplier</span>
           </div>
           <input
-            type="range"
+            type="number"
             min={MIN_SCALE}
             max={MAX_SCALE}
             step={STEP}
-            value={pendingValue}
-            onChange={(event) => !isDocked && handleScaleChange(Number(event.target.value))}
-            onPointerDown={!isDocked ? handlePointerDown : undefined}
-            onPointerUp={!isDocked ? handlePointerUp : undefined}
+            value={pendingValue || ''}
+            onChange={!isDocked ? handleInputChange : undefined}
+            onBlur={!isDocked ? handleInputBlur : undefined}
+            onFocus={!isDocked ? handlePointerDown : undefined}
+            onKeyDown={(e) => {
+              // Allow Enter to apply immediately
+              if (e.key === 'Enter' && !isDocked) {
+                handleInputBlur();
+                e.currentTarget.blur();
+              }
+            }}
             disabled={isDocked}
-            className={sliderClass}
+            className={inputClass}
+            placeholder="1.000"
           />
           <div className="mt-2 flex items-center justify-between text-[11px] text-white/60">
-            <span>{MIN_SCALE.toFixed(1)}x</span>
+            <span className="text-white/40">Range: {MIN_SCALE}x – {MAX_SCALE}x</span>
             <button
               type="button"
               className={resetButtonClass}
               onClick={isDocked ? undefined : handleReset}
               disabled={isDocked}
             >
-              Reset
+              Reset to 1x
             </button>
-            <span>{MAX_SCALE.toFixed(1)}x</span>
           </div>
         </div>
       </div>

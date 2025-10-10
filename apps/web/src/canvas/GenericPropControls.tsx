@@ -53,6 +53,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
       anchor: entry.anchor,
       position,
       rotation: entry.defaultRotation,
+      scale: entry.defaultScale ? [entry.defaultScale, entry.defaultScale, entry.defaultScale] : [1, 1, 1],
     });
 
     // Push spawn action to undo stack

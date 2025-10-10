@@ -39,6 +39,7 @@ type GenericPropBlueprint = {
   anchor?: AnchorConfig;
   position?: Vec3;
   rotation?: Vec3;
+  scale?: Vec3;
 };
 
 type Subscriber = () => void;
@@ -89,6 +90,7 @@ function normalizeBlueprint(blueprint: GenericPropBlueprint) {
     anchor: blueprint.anchor,
     position: blueprint.position ? cloneVec(blueprint.position) : cloneVec(STAGING_POSITION),
     rotation: blueprint.rotation ? cloneVec(blueprint.rotation) : cloneVec(DEFAULT_ROTATION),
+    scale: blueprint.scale ? cloneVec(blueprint.scale) : cloneVec(DEFAULT_SCALE),
   };
 }
 
@@ -113,7 +115,7 @@ export function spawnGenericProp(blueprint: GenericPropBlueprint): GenericProp {
     anchor: normalized.anchor,
     position: normalized.position,
     rotation: normalized.rotation,
-    scale: cloneVec(DEFAULT_SCALE),
+    scale: normalized.scale,
     status: 'dragging',
     docked: false,
     dockOffset: undefined,

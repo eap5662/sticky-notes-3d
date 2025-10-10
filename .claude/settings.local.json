@@ -3,7 +3,8 @@
     "allow": [
       "Bash(pnpm dev:web:*)",
       "Bash(pnpm build:*)",
-      "Read(//c/Users/ihelp/Downloads/**)"
+      "Read(//c/Users/ihelp/Downloads/**)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": []

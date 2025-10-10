@@ -1,77 +1,69 @@
-# Documentation Index
+# Sticky3D Documentation
 
-## Quick Start
+Welcome to the Sticky3D documentation! This folder contains technical guides and workflows for working with the project.
 
-- **[CLAUDE.md](../CLAUDE.md)** - Main project guide with architecture overview and development commands
-- **[camera-system-technical-guide.md](./camera-system-technical-guide.md)** - ⭐ **START HERE** for camera system work
+## Documentation Index
 
-## Camera System Documentation
+### 🎥 Camera System
+- **[Camera System Technical Guide](./camera-system-technical-guide.md)** - Complete architecture of the camera system, including desk-relative alignment, dynamic clamps, spherical coordinates, and troubleshooting
 
-### Primary Documentation
-- **[camera-system-technical-guide.md](./camera-system-technical-guide.md)** (October 2025)
-  - **Complete technical reference** for implemented camera system
-  - Desk-relative alignment mechanics
-  - Dynamic clamp system for screen view
-  - Spherical coordinate explanations
-  - Data flow diagrams
-  - Troubleshooting guide
-  - **Use this for understanding current implementation**
+### 📦 Prop Management
+- **[Prop Onboarding Guide](./prop-onboarding-guide.md)** - How to add 20-40 props quickly using the automated onboarding system
 
-### Historical/Planning Documents
-- **[camera-reform-plan.md](./camera-reform-plan.md)** - Original v1.0 refactor plan (mostly implemented)
-- **[Plan camera-first desk align.txt](./Plan%20camera-first%20desk%20align.txt)** - Layout frame system design (implemented)
-
-## Layout & Props
-- **[prop-alignment-plan.md](./prop-alignment-plan.md)** - Prop placement and alignment strategies
+### 📋 Planning Documents
+- **[Plan camera-first desk align.txt](./Plan%20camera-first%20desk%20align.txt)** - Original 6-step plan for layout system (implemented)
+- **[prop-alignment-plan.md](./prop-alignment-plan.md)** - High-level goals and proposed workflow for prop system
 
 ---
 
-## When to Use Which Document
+## Quick Links
 
-### "I need to understand how the camera works"
-→ Read **camera-system-technical-guide.md**
+**For implementing camera features:**
+→ See [Camera System Technical Guide](./camera-system-technical-guide.md)
 
-### "I need to modify camera behavior"
-→ Read **camera-system-technical-guide.md** sections:
-- "View Configurations" (for clamp adjustments)
-- "Desk-Relative Camera Alignment" (for alignment logic)
-- "Dynamic Clamp System" (for screen view constraints)
+**For adding new props:**
+→ See [Prop Onboarding Guide](./prop-onboarding-guide.md)
 
-### "The camera isn't aligning with the desk"
-→ Read **camera-system-technical-guide.md** section:
-- "Troubleshooting Guide" → "Camera Doesn't Align with Desk Forward Vector"
+**For understanding the codebase:**
+→ See [CLAUDE.md](../CLAUDE.md) in the root directory
 
-### "I want to add a new camera view"
-→ Read **camera-system-technical-guide.md** section:
-- "Future Enhancements" → "Multiple Saved Camera Positions"
-
-### "I need high-level architecture overview"
-→ Read **CLAUDE.md** section:
-- "Architecture Overview" → "4. Camera System"
+**For recent changes:**
+→ See [SPRINT_SUMMARY.md](../SPRINT_SUMMARY.md) in the root directory
 
 ---
 
-## Document Status
+## Documentation Standards
 
-| Document | Status | Last Updated | Purpose |
-|----------|--------|--------------|---------|
-| camera-system-technical-guide.md | ✅ Current | Oct 2025 | Technical reference for implemented system |
-| camera-reform-plan.md | 📦 Archive | Earlier | Original refactor plan (mostly complete) |
-| Plan camera-first desk align.txt | 📦 Archive | Earlier | Layout frame design (implemented) |
-| prop-alignment-plan.md | ✅ Current | Oct 2024 | Prop placement strategies |
+### When to Update Docs
+
+**Camera System Technical Guide:**
+- Camera alignment algorithm changes
+- New view modes added
+- Clamp calculation changes
+- New camera-related bugs discovered
+
+**Prop Onboarding Guide:**
+- New prop processing features
+- Changed workflow steps
+- New override options
+- Additional prop requirements
+
+### Writing Style
+
+- Use clear, concise language
+- Include code examples
+- Provide troubleshooting sections
+- Link to related files with line numbers where applicable
+- Use emojis sparingly for section markers only
 
 ---
 
-## Quick Answers
+## Contributing to Docs
 
-**Q: Why is camera yaw always ~90°?**
-A: The desk's forward vector points in -X direction. Camera is positioned opposite (in front of desk where user sits), which places it on +X axis = 90° yaw. See "Desk-Relative Camera Alignment" in technical guide.
+When adding new documentation:
 
-**Q: Why does screen view have full 360° yaw?**
-A: It doesn't—it has *dynamic* ±30° clamps centered around the calculated monitor-facing direction. The static config shows full range because clamps are applied dynamically in `CameraRigController`. See "Dynamic Clamp System" in technical guide.
-
-**Q: What's the difference between yaw and azimuth?**
-A: They're the same thing. "Yaw" is used in our code, "azimuth" is used by the `camera-controls` library. Both mean horizontal rotation angle around the Y-axis.
-
-**Q: Why can't I just set yaw to 0° to align with desk?**
-A: Because yaw is calculated from the desk's forward vector, which varies based on desk rotation. The calculation *produces* the correct yaw (typically 90° for standard desk orientation). Setting a fixed yaw wouldn't follow desk rotation. See "Desk-Relative Camera Alignment" in technical guide.
+1. Add the file to this `docs/` directory
+2. Update this README.md with a link to the new doc
+3. Use markdown format (.md)
+4. Include a "Last Updated" date at the top
+5. Add a table of contents for docs > 200 lines

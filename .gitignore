@@ -36,3 +36,12 @@ coverage/
 
 # Misc
 *.local
+
+# Prop onboarding generated files
+prop-analysis.json
+PROP_ANALYSIS.md
+generated/
+
+# Keep these in version control:
+# prop-overrides.json (manual configurations)
+# prop-approved.json (approved props list)

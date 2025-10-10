@@ -8,6 +8,12 @@
   ],
   "scripts": {
     "dev:web": "pnpm -C apps/web dev",
-    "dev:server": "pnpm -C apps/server dev"
+    "dev:server": "pnpm -C apps/server dev",
+    "props:analyze": "tsx scripts/analyze-props.ts",
+    "props:generate": "tsx scripts/generate-catalog.ts",
+    "props:help": "echo '\n📦 Prop Onboarding Commands:\n  props:analyze  - Scan models folder and analyze props\n  props:generate - Generate catalog entries from analysis\n  props:help     - Show this help message\n'"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5"
   }
 }

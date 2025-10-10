@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "List of approved props that should be skipped during analysis",
+
+  "approved": [
+    "DeskTopPlane.glb",
+    "lamp.glb",
+    "monitor_processed.glb",
+    "Computer-Mouse.glb",
+    "Mousepad.glb",
+    "Mug-supplies.glb",
+    "Notebook.glb",
+    "Pen.glb",
+    "Rubber-Duck.glb",
+    "Soda-Can.glb",
+    "Sticky-notes-pad-thick.glb",
+    "Sticky-notes-pad1.glb",
+    "Tissue-Box.glb",
+    "Monitor-large.glb",
+    "Whiteboard1.glb"
+  ],
+
+  "_instructions": {
+    "usage": "Add prop filenames to the 'approved' array after they've been successfully onboarded",
+    "workflow": "After each batch: run props:generate → add to catalog → test → mark as approved here",
+    "example": "After onboarding batch 1 (coffee-mug.glb, keyboard.glb), add them to the array above"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Prop configuration overrides for catalog generation",
+
+  "Whiteboard1.glb": {
+    "surfaces": [
+      {
+        "nodeName": "WhiteBoardSurface",
+        "kind": "wall",
+        "normalSide": "positive"
+      }
+    ]
+  },
+
+  "Monitor-large.glb": {
+    "surfaces": [
+      {
+        "nodeName": "MonitorSurfacePlane",
+        "kind": "screen",
+        "normalSide": "positive"
+      }
+    ]
+  }
+}
