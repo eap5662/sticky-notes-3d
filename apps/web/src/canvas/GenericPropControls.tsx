@@ -1,6 +1,6 @@
 import { useCallback, useState, useMemo } from 'react';
 
-import { PROP_CATALOG } from '@/data/propCatalog';
+import { PROP_CATALOG, CATEGORY_DEFINITIONS, type PropCategory } from '@/data/propCatalog';
 import { spawnGenericProp } from '@/state/genericPropsStore';
 import { setSelection } from '@/state/selectionStore';
 import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
@@ -14,6 +14,7 @@ const DESK_CLEARANCE = 0.015; // Same as GenericProp.tsx
 export default function GenericPropControls({ className = '' }: { className?: string } = {}) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [enabledCategories, setEnabledCategories] = useState<Set<PropCategory>>(new Set());
   const pushAction = useUndoHistoryStore((s) => s.push);
 
   // Get all spawned props to check for duplicates
@@ -34,8 +35,26 @@ export default function GenericPropControls({ className = '' }: { className?: st
     return genericProps.some(prop => prop.catalogId === catalogId);
   }, [genericProps]);
 
-  // Filtered and sorted catalog
-  const filteredCatalog = useMemo(() => {
+  // Toggle category filter
+  const toggleCategory = useCallback((category: PropCategory) => {
+    setEnabledCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }, []);
+
+  // Get sorted categories by order
+  const sortedCategories = useMemo(() => {
+    return Object.values(CATEGORY_DEFINITIONS).sort((a, b) => a.order - b.order);
+  }, []);
+
+  // Filtered and grouped catalog
+  const groupedCatalog = useMemo(() => {
     let filtered = PROP_CATALOG;
 
     // Apply search filter
@@ -47,9 +66,69 @@ export default function GenericPropControls({ className = '' }: { className?: st
       );
     }
 
-    // Sort alphabetically by label
-    return filtered.slice().sort((a, b) => a.label.localeCompare(b.label));
-  }, [searchQuery]);
+    // Apply category filter
+    if (enabledCategories.size > 0) {
+      if (enabledCategories.size === 1) {
+        // Single filter: show props that have this category (primary OR secondary)
+        filtered = filtered.filter(entry =>
+          entry.categories.some(cat => enabledCategories.has(cat))
+        );
+      } else {
+        // Multiple filters (AND logic): show ONLY props that have ALL selected categories
+        filtered = filtered.filter(entry => {
+          const enabledArray = Array.from(enabledCategories);
+          return enabledArray.every(cat => entry.categories.includes(cat));
+        });
+      }
+    }
+
+    // Group by primary category
+    const grouped = new Map<PropCategory, typeof PROP_CATALOG>();
+    for (const entry of filtered) {
+      if (!grouped.has(entry.primaryCategory)) {
+        grouped.set(entry.primaryCategory, []);
+      }
+      grouped.get(entry.primaryCategory)!.push(entry);
+    }
+
+    // Sort each category's props:
+    // When filtering is active, prioritize props where ANY filtered category is their primary
+    for (const [category, props] of grouped) {
+      props.sort((a, b) => {
+        if (enabledCategories.size > 0) {
+          const aIsPrimary = enabledCategories.has(a.primaryCategory);
+          const bIsPrimary = enabledCategories.has(b.primaryCategory);
+
+          if (aIsPrimary && !bIsPrimary) return -1;
+          if (!aIsPrimary && bIsPrimary) return 1;
+        }
+
+        // Then sort alphabetically
+        return a.label.localeCompare(b.label);
+      });
+    }
+
+    // Build groups array and sort
+    let groups = sortedCategories
+      .map(catDef => ({ category: catDef, props: grouped.get(catDef.id) || [] }))
+      .filter(group => group.props.length > 0);
+
+    // When filtering is active, reorder groups to show filtered category groups first
+    if (enabledCategories.size > 0) {
+      groups.sort((a, b) => {
+        const aIsFiltered = enabledCategories.has(a.category.id);
+        const bIsFiltered = enabledCategories.has(b.category.id);
+
+        if (aIsFiltered && !bIsFiltered) return -1;
+        if (!aIsFiltered && bIsFiltered) return 1;
+
+        // Maintain category order for groups of same priority
+        return a.category.order - b.category.order;
+      });
+    }
+
+    return groups;
+  }, [searchQuery, enabledCategories, sortedCategories]);
 
   const handleSpawn = useCallback((catalogId: string) => {
     const entry = PROP_CATALOG.find((item) => item.id === catalogId);
@@ -113,54 +192,113 @@ export default function GenericPropControls({ className = '' }: { className?: st
       </button>
 
       {isOpen && (
-        <div className="pointer-events-auto w-72 rounded-lg bg-black/70 text-sm text-white shadow-lg flex flex-col" style={{ maxHeight: '60vh' }}>
+        <div className="pointer-events-auto w-72 rounded-lg bg-black/70 text-sm text-white shadow-lg flex flex-col" style={{ maxHeight: '80vh' }}>
           {/* Sticky Header */}
           <div className="px-4 py-3 border-b border-white/10 flex-shrink-0">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs uppercase tracking-wide text-white/70">Prop Catalog</div>
-              <div className="text-[10px] text-white/50">{filteredCatalog.length} props</div>
+              <div className="text-[10px] text-white/50">
+                {groupedCatalog.reduce((sum, group) => sum + group.props.length, 0)} props
+              </div>
             </div>
+
             <input
               type="text"
               placeholder="Search props..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-md border border-white/30 bg-black/50 px-3 py-1.5 text-sm text-white placeholder:text-white/40 focus:border-white/60 focus:outline-none focus:ring-2 focus:ring-white/20 transition-all"
+              className="w-full rounded-md border border-white/30 bg-black/50 px-3 py-1.5 text-sm text-white placeholder:text-white/40 focus:border-white/60 focus:outline-none focus:ring-2 focus:ring-white/20 transition-all mb-3"
             />
+
+            {/* Category Filters */}
+            <div className="space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wide text-white/50 mb-1.5">Filter by Category</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {sortedCategories.map((catDef) => (
+                  <label
+                    key={catDef.id}
+                    className="flex items-center gap-1.5 cursor-pointer group"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={enabledCategories.has(catDef.id)}
+                      onChange={() => toggleCategory(catDef.id)}
+                      className="w-3 h-3 rounded border-white/30 bg-black/50 text-white/80 focus:ring-2 focus:ring-white/20 cursor-pointer flex-shrink-0"
+                    />
+                    <span
+                      className="text-[11px] py-0.5 rounded border group-hover:opacity-90 transition-opacity flex-1 relative"
+                      style={{
+                        borderColor: catDef.borderColor,
+                        color: 'rgba(255, 255, 255, 0.85)',
+                        paddingLeft: '1.75rem',
+                        paddingRight: '0.5rem',
+                        textAlign: 'center'
+                      }}
+                    >
+                      <span className="absolute left-1.5 top-1/2 -translate-y-1/2">{catDef.icon}</span>
+                      {catDef.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* Scrollable Content - Custom Scrollbar */}
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 custom-scrollbar">
-            {filteredCatalog.length === 0 ? (
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar">
+            {groupedCatalog.length === 0 ? (
               <div className="text-center text-white/40 py-6 text-xs">
                 No props found
               </div>
             ) : (
-              filteredCatalog.map((entry) => {
-                const alreadySpawned = isAlreadySpawned(entry.id);
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    disabled={alreadySpawned}
-                    className={`group w-full rounded-lg border px-4 text-left text-xs flex items-center justify-between transition-all
-                      ${alreadySpawned
-                        ? 'h-12 cursor-not-allowed border-green-500/30 bg-green-500/5'
-                        : 'h-12 border-white/30 bg-black/20 hover:bg-white/10 hover:border-white/50 focus:outline-none focus:ring-2 focus:ring-white/40'
-                      }`}
-                    onClick={() => !alreadySpawned && handleSpawn(entry.id)}
-                  >
-                    <span className={`uppercase tracking-wide ${alreadySpawned ? 'text-white/60' : 'text-white'}`}>
-                      {entry.label}
-                    </span>
-                    {alreadySpawned && (
-                      <span className="inline-flex items-center rounded-full bg-green-500/30 px-2.5 py-1 text-[10px] font-medium text-green-200 uppercase tracking-wider">
-                        In Scene
-                      </span>
-                    )}
-                  </button>
-                );
-              })
+              groupedCatalog.map(({ category, props }) => (
+                <div
+                  key={category.id}
+                  className="rounded-lg border-2 p-2 space-y-2"
+                  style={{ borderColor: category.borderColor }}
+                >
+                  {/* Category Props */}
+                  {props.map((entry) => {
+                    const alreadySpawned = isAlreadySpawned(entry.id);
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        disabled={alreadySpawned}
+                        className={`group w-full rounded-lg px-4 text-left text-xs flex items-center justify-between transition-all h-12
+                          ${alreadySpawned
+                            ? 'cursor-not-allowed'
+                            : 'hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-white/40'
+                          }`}
+                        style={{
+                          backgroundColor: category.bgColor
+                        }}
+                        onClick={() => !alreadySpawned && handleSpawn(entry.id)}
+                      >
+                        <span className={`tracking-wide ${alreadySpawned ? 'text-black/50' : 'text-black/90'}`}>
+                          {entry.label}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {alreadySpawned && (
+                            <span className="inline-flex items-center rounded-full bg-green-500/30 px-2.5 py-1 text-[10px] font-medium text-green-200 uppercase tracking-wider">
+                              In Scene
+                            </span>
+                          )}
+                          {/* Category badges (max 3) */}
+                          {entry.categories.slice(0, 3).map((cat) => {
+                            const catMeta = CATEGORY_DEFINITIONS[cat];
+                            return (
+                              <span key={cat} className="text-xs opacity-60" title={catMeta.label}>
+                                {catMeta.icon}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
             )}
           </div>
 
