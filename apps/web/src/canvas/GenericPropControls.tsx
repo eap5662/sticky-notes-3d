@@ -1,6 +1,6 @@
 import { useCallback, useState, useMemo } from 'react';
 
-import { PROP_CATALOG, CATEGORY_DEFINITIONS, type PropCategory } from '@/data/propCatalog';
+import { PROP_CATALOG, CATEGORY_DEFINITIONS, SURFACE_TYPE_ICONS, type PropCategory } from '@/data/propCatalog';
 import { spawnGenericProp } from '@/state/genericPropsStore';
 import { setSelection } from '@/state/selectionStore';
 import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
@@ -92,9 +92,11 @@ export default function GenericPropControls({ className = '' }: { className?: st
     }
 
     // Sort each category's props:
-    // When filtering is active, prioritize props where ANY filtered category is their primary
+    // 1. Primary category matches first (when filtering is active)
+    // 2. Then alphabetically within each priority group
     for (const [category, props] of grouped) {
       props.sort((a, b) => {
+        // If category filtering is active, prioritize primary category matches
         if (enabledCategories.size > 0) {
           const aIsPrimary = enabledCategories.has(a.primaryCategory);
           const bIsPrimary = enabledCategories.has(b.primaryCategory);
@@ -230,12 +232,32 @@ export default function GenericPropControls({ className = '' }: { className?: st
                       style={{
                         borderColor: catDef.borderColor,
                         color: 'rgba(255, 255, 255, 0.85)',
-                        paddingLeft: '1.75rem',
+                        paddingLeft: catDef.id === 'surface' ? '2.25rem' : '1.75rem',
                         paddingRight: '0.5rem',
                         textAlign: 'center'
                       }}
                     >
-                      <span className="absolute left-1.5 top-1/2 -translate-y-1/2">{catDef.icon}</span>
+                      <span className="absolute left-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                        {catDef.id === 'surface' ? (
+                          // Special case for Surfaces: show both monitor and board icons
+                          <>
+                            <span className="text-xs">{SURFACE_TYPE_ICONS.monitor}</span>
+                            <img
+                              src={SURFACE_TYPE_ICONS.board}
+                              alt="board"
+                              className="w-3 h-3 inline-block"
+                            />
+                          </>
+                        ) : catDef.iconPath ? (
+                          <img
+                            src={catDef.iconPath}
+                            alt={catDef.label}
+                            className="w-4 h-4 inline-block"
+                          />
+                        ) : (
+                          catDef.icon
+                        )}
+                      </span>
                       {catDef.label}
                     </span>
                   </label>
@@ -284,15 +306,47 @@ export default function GenericPropControls({ className = '' }: { className?: st
                               In Scene
                             </span>
                           )}
-                          {/* Category badges (max 3) */}
-                          {entry.categories.slice(0, 3).map((cat) => {
-                            const catMeta = CATEGORY_DEFINITIONS[cat];
-                            return (
-                              <span key={cat} className="text-xs opacity-60" title={catMeta.label}>
-                                {catMeta.icon}
-                              </span>
-                            );
-                          })}
+                          {/* Category badges (max 3) - wrapped in dark chip */}
+                          {!alreadySpawned && entry.categories.length > 0 && (
+                            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-black/15">
+                              {entry.categories.slice(0, 3).map((cat) => {
+                                const catMeta = CATEGORY_DEFINITIONS[cat];
+
+                                // Special case: for surface category, show specific surfaceType icon instead
+                                if (cat === 'surface' && entry.surfaceType) {
+                                  const surfaceIcon = SURFACE_TYPE_ICONS[entry.surfaceType];
+                                  const isImagePath = surfaceIcon.startsWith('/');
+                                  return (
+                                    <span key={cat} className="text-xs" title={entry.surfaceType}>
+                                      {isImagePath ? (
+                                        <img
+                                          src={surfaceIcon}
+                                          alt={entry.surfaceType}
+                                          className="w-3 h-3 inline-block"
+                                        />
+                                      ) : (
+                                        surfaceIcon
+                                      )}
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <span key={cat} className="text-xs" title={catMeta.label}>
+                                    {catMeta.iconPath ? (
+                                      <img
+                                        src={catMeta.iconPath}
+                                        alt={catMeta.label}
+                                        className="w-3 h-3 inline-block"
+                                      />
+                                    ) : (
+                                      catMeta.icon
+                                    )}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </button>
                     );

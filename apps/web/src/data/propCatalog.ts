@@ -16,20 +16,29 @@ export type PropCategory = 'desk' | 'surface' | 'electronics' | 'desk-accessorie
 export type CategoryMetadata = {
   id: PropCategory;
   label: string;
-  icon: string;
+  icon: string; // Emoji fallback
+  iconPath?: string; // Optional path to icon image
   borderColor: string; // Hex color for borders
   bgColor: string; // Lightened hex color for backgrounds
   order: number;
 };
 
 export const CATEGORY_DEFINITIONS: Record<PropCategory, CategoryMetadata> = {
-  'desk': { id: 'desk', label: 'Desks', icon: '🪑', borderColor: '#8B5E3C', bgColor: '#E8DDD5', order: 1 },
+  'desk': { id: 'desk', label: 'Desks', icon: '🪑', iconPath: '/icons/categories/desk_icon.png', borderColor: '#8B5E3C', bgColor: '#E8DDD5', order: 1 },
   'surface': { id: 'surface', label: 'Surfaces', icon: '🖥️', borderColor: '#2c78b6', bgColor: '#D1E7F8', order: 2 },
-  'electronics': { id: 'electronics', label: 'Electronics', icon: '⚡', borderColor: '#55f4a8', bgColor: '#DCFEF0', order: 3 },
-  'desk-accessories': { id: 'desk-accessories', label: 'Accessories', icon: '🖱️', borderColor: '#6a6a6a', bgColor: '#E2E2E2', order: 4 },
+  'electronics': { id: 'electronics', label: 'Electronics', icon: '⚡', iconPath: '/icons/categories/extension.png', borderColor: '#55f4a8', bgColor: '#DCFEF0', order: 3 },
+  'desk-accessories': { id: 'desk-accessories', label: 'Accessories', icon: '🖱️', iconPath: '/icons/categories/mug.png', borderColor: '#6a6a6a', bgColor: '#E2E2E2', order: 4 },
   'supplies': { id: 'supplies', label: 'Supplies', icon: '📝', borderColor: '#eeeb61', bgColor: '#FCFCE4', order: 5 },
   'decorations': { id: 'decorations', label: 'Decorations', icon: '🎨', borderColor: '#E96D88', bgColor: '#FBE3E9', order: 6 },
 };
+
+// Surface subtypes with their icons
+export const SURFACE_TYPE_ICONS = {
+  monitor: '🖥️', // Emoji fallback
+  board: '/icons/categories/white-board.png',
+} as const;
+
+export type SurfaceType = 'monitor' | 'board';
 
 export type PropCatalogEntry = {
   id: string;
@@ -41,6 +50,7 @@ export type PropCatalogEntry = {
   surfaces?: PropSurfaceConfig[];
   primaryCategory: PropCategory; // Primary category used for sorting
   categories: PropCategory[]; // All categories this prop belongs to (max 3)
+  surfaceType?: SurfaceType; // For surface category props: monitor or board
 };
 
 export const PROP_CATALOG: PropCatalogEntry[] = [
@@ -76,6 +86,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     defaultRotation: [0, -Math.PI / 2, 0] as [number, number, number], // Face desk forward (-90° Y-rotation)
     primaryCategory: 'surface',
     categories: ['surface', 'electronics'],
+    surfaceType: 'monitor',
     surfaces: [
       {
         id: createSurfaceId('monitor-basic-screen'),
@@ -183,6 +194,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     defaultScale: 0.1, // Optimal: 0.1x
     primaryCategory: 'surface',
     categories: ['surface'],
+    surfaceType: 'board',
     surfaces: [
       {
         id: createSurfaceId('Whiteboard1-wall'),
