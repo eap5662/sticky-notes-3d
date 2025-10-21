@@ -11,7 +11,8 @@ import { registerCatalogCloseHandler } from '@/state/catalogState';
 import { useDelayedVisibility } from './hooks/useDelayedVisibility';
 
 const PANEL_CLASS = 'pointer-events-auto w-56 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg';
-const BUTTON_CLASS = 'pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80';
+const BUTTON_CLASS =
+  'pointer-events-auto rounded-full border border-white/25 bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow transition-colors duration-150 hover:border-green-400 hover:bg-green-500 hover:text-black focus:outline-none focus:ring-2 focus:ring-green-400/60';
 const DESK_CLEARANCE = 0.015; // Same as GenericProp.tsx
 
 export default function GenericPropControls({ className = '' }: { className?: string } = {}) {
@@ -24,8 +25,16 @@ export default function GenericPropControls({ className = '' }: { className?: st
   // Always delay entrance to be safe (prop panels might be closing)
   const shouldShow = useDelayedVisibility(isOpen, {
     enterDelay: 300, // Coordinate with prop panel close
-    exitDelay: 0     // No delay needed for catalog exit
+    exitDelay: 250   // Match exit animation duration
   });
+
+  const [isCatalogRendering, setIsCatalogRendering] = useState(false);
+
+  useEffect(() => {
+    if (shouldShow) {
+      setIsCatalogRendering(true);
+    }
+  }, [shouldShow]);
 
   // Mutual exclusivity logic: Only one UI can be active at a time
   // (1) When user selects a prop from scene → close catalog
@@ -219,7 +228,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
     setSelection({ kind: 'generic', id: prop.id });
   }, [deskHeight, pushAction]);
 
-  const containerClass = ['pointer-events-none flex flex-col items-end gap-2', className]
+  const containerClass = ['pointer-events-none flex items-start justify-end gap-2', className]
     .filter(Boolean)
     .join(' ');
 
@@ -227,19 +236,38 @@ export default function GenericPropControls({ className = '' }: { className?: st
     setIsOpen((prev) => !prev);
   }, []);
 
-  return (
-    <div className={containerClass}>
-      <button
-        type="button"
-        className={BUTTON_CLASS}
-        onClick={handleToggleCatalog}
-      >
-        {isOpen ? 'Close Props' : 'Add Prop'}
-      </button>
+  const totalProps = groupedCatalog.reduce((sum, group) => sum + group.props.length, 0);
 
+  const showAddButton = !isOpen && !isCatalogRendering;
+
+  return (
+    <div className={containerClass} style={{ marginTop: '0.35rem' }}>
       <AnimatePresence>
-        {shouldShow && isOpen && (
+        {showAddButton && (
+          <motion.button
+            key="add-prop-button"
+            type="button"
+            className={BUTTON_CLASS}
+            onClick={handleToggleCatalog}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            style={{ marginTop: '0.6rem' }}
+          >
+            Add Prop
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence
+        onExitComplete={() => {
+          setIsCatalogRendering(false);
+        }}
+      >
+        {shouldShow && (
           <motion.div
+            layout
             initial={{ opacity: 0, x: 20, scale: 0.95 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 20, scale: 0.95 }}
@@ -249,12 +277,20 @@ export default function GenericPropControls({ className = '' }: { className?: st
           >
           {/* Sticky Header */}
           <div className="px-4 py-3 border-b border-white/10 flex-shrink-0">
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="mb-1.5 flex items-center gap-2">
               <div className="text-xs uppercase tracking-wide text-white/90 font-semibold">Prop Catalog</div>
-              <div className="text-xs">
-                <span className="font-bold text-white/80">{groupedCatalog.reduce((sum, group) => sum + group.props.length, 0)}</span>
+              <div className="flex-1 text-center text-xs text-white/60">
+                <span className="font-bold text-white/80">{totalProps}</span>
                 <span className="font-normal text-white/50"> props</span>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                aria-label="Close prop catalog"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-white/30 text-lg text-white/80 transition-colors hover:bg-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-400/60 focus:bg-red-500"
+              >
+                ×
+              </button>
             </div>
 
             <input
