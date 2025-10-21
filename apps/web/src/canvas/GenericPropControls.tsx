@@ -1,11 +1,13 @@
-import { useCallback, useState, useMemo } from 'react';
+import { useCallback, useState, useMemo, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 import { PROP_CATALOG, CATEGORY_DEFINITIONS, SURFACE_TYPE_ICONS, type PropCategory } from '@/data/propCatalog';
 import { spawnGenericProp } from '@/state/genericPropsStore';
-import { setSelection } from '@/state/selectionStore';
+import { setSelection, clearSelection, getSelection, subscribeSelection } from '@/state/selectionStore';
 import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
 import { useGenericProps } from './hooks/useGenericProps';
 import { useUndoHistoryStore, type GenericPropSnapshot } from '@/state/undoHistoryStore';
+import { registerCatalogCloseHandler } from '@/state/catalogState';
 
 const PANEL_CLASS = 'pointer-events-auto w-56 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg';
 const BUTTON_CLASS = 'pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80';
@@ -16,6 +18,93 @@ export default function GenericPropControls({ className = '' }: { className?: st
   const [searchQuery, setSearchQuery] = useState('');
   const [enabledCategories, setEnabledCategories] = useState<Set<PropCategory>>(new Set());
   const pushAction = useUndoHistoryStore((s) => s.push);
+
+  // Track delayed showing to coordinate with prop panel close animation
+  const [shouldShow, setShouldShow] = useState(false);
+  const prevIsOpenRef = useRef(false);
+  const selectionExistedBeforeOpenRef = useRef(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Track whether a selection exists BEFORE opening catalog (when catalog is closed)
+  useEffect(() => {
+    if (!isOpen) {
+      const currentSelection = getSelection();
+      selectionExistedBeforeOpenRef.current = currentSelection !== null;
+    }
+  }, [isOpen]);
+
+  // Mutual exclusivity logic: Only one UI can be active at a time
+  // (1) When user selects a prop from scene → close catalog
+  useEffect(() => {
+    const unsubscribe = subscribeSelection(() => {
+      const selection = getSelection();
+      // Only close if a prop was selected (ignore clearSelection calls)
+      if (selection !== null) {
+        setIsOpen(false);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // (2) When user opens catalog → deselect any selected prop
+  useEffect(() => {
+    if (isOpen) {
+      const currentSelection = getSelection();
+      // Only clear if something is actually selected (avoid unnecessary calls)
+      if (currentSelection !== null) {
+        clearSelection();
+      }
+    }
+  }, [isOpen]);
+
+  // (2b) Register catalog close handler for external control (scene clicks)
+  useEffect(() => {
+    const unregister = registerCatalogCloseHandler(() => setIsOpen(false));
+    return unregister;
+  }, []);
+
+  // (3) Coordinate showing/hiding with prop panel transitions
+  useEffect(() => {
+    // Clear any pending timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+
+    const wasOpen = prevIsOpenRef.current;
+    const nowOpen = isOpen;
+
+    if (!wasOpen && nowOpen) {
+      // Catalog opening - check if we just cleared a selection
+      if (selectionExistedBeforeOpenRef.current) {
+        // Had a selection before opening - delay to let prop panel close
+        // First hide immediately, then show after delay
+        setShouldShow(false);
+        timeoutRef.current = setTimeout(() => {
+          setShouldShow(true);
+          timeoutRef.current = null;
+        }, 300);
+      } else {
+        // No selection before - show immediately
+        setShouldShow(true);
+      }
+    } else if (nowOpen) {
+      // Staying open - keep showing
+      setShouldShow(true);
+    } else {
+      // Closing - hide immediately (exit animation)
+      setShouldShow(false);
+    }
+
+    prevIsOpenRef.current = nowOpen;
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, [isOpen]);
 
   // Get all spawned props to check for duplicates
   const genericProps = useGenericProps();
@@ -175,32 +264,45 @@ export default function GenericPropControls({ className = '' }: { className?: st
       snapshot,
     });
 
+    // Select the newly spawned prop (catalog will auto-close via selection subscription)
     setSelection({ kind: 'generic', id: prop.id });
-    setIsOpen(false);
   }, [deskHeight, pushAction]);
 
   const containerClass = ['pointer-events-none flex flex-col items-end gap-2', className]
     .filter(Boolean)
     .join(' ');
 
+  const handleToggleCatalog = useCallback(() => {
+    setIsOpen((prev) => !prev);
+  }, []);
+
   return (
     <div className={containerClass}>
       <button
         type="button"
         className={BUTTON_CLASS}
-        onClick={() => setIsOpen((prev) => !prev)}
+        onClick={handleToggleCatalog}
       >
         {isOpen ? 'Close Props' : 'Add Prop'}
       </button>
 
-      {isOpen && (
-        <div className="pointer-events-auto w-72 rounded-lg bg-black/70 text-sm text-white shadow-lg flex flex-col" style={{ maxHeight: '80vh' }}>
+      <AnimatePresence>
+        {shouldShow && isOpen && (
+          <motion.div
+            initial={{ opacity: 0, x: 20, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 20, scale: 0.95 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            className="pointer-events-auto w-72 rounded-lg bg-black/70 text-sm text-white shadow-lg flex flex-col"
+            style={{ maxHeight: '80vh' }}
+          >
           {/* Sticky Header */}
           <div className="px-4 py-3 border-b border-white/10 flex-shrink-0">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs uppercase tracking-wide text-white/70">Prop Catalog</div>
-              <div className="text-[10px] text-white/50">
-                {groupedCatalog.reduce((sum, group) => sum + group.props.length, 0)} props
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-xs uppercase tracking-wide text-white/90 font-semibold">Prop Catalog</div>
+              <div className="text-xs">
+                <span className="font-bold text-white/80">{groupedCatalog.reduce((sum, group) => sum + group.props.length, 0)}</span>
+                <span className="font-normal text-white/50"> props</span>
               </div>
             </div>
 
@@ -209,32 +311,33 @@ export default function GenericPropControls({ className = '' }: { className?: st
               placeholder="Search props..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-md border border-white/30 bg-black/50 px-3 py-1.5 text-sm text-white placeholder:text-white/40 focus:border-white/60 focus:outline-none focus:ring-2 focus:ring-white/20 transition-all mb-3"
+              className="w-full rounded-md border border-white/30 bg-black/50 px-3 py-1 text-sm text-white placeholder:text-white/40 focus:border-white/60 focus:outline-none focus:ring-2 focus:ring-white/20 transition-all mb-2"
             />
 
             {/* Category Filters */}
-            <div className="space-y-1.5">
-              <div className="text-[10px] uppercase tracking-wide text-white/50 mb-1.5">Filter by Category</div>
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-white/50 mb-1">Filter by Category</div>
               <div className="grid grid-cols-2 gap-1.5">
-                {sortedCategories.map((catDef) => (
-                  <label
-                    key={catDef.id}
-                    className="flex items-center gap-1.5 cursor-pointer group"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={enabledCategories.has(catDef.id)}
-                      onChange={() => toggleCategory(catDef.id)}
-                      className="w-3 h-3 rounded border-white/30 bg-black/50 text-white/80 focus:ring-2 focus:ring-white/20 cursor-pointer flex-shrink-0"
-                    />
-                    <span
-                      className="text-[11px] py-0.5 rounded border group-hover:opacity-90 transition-opacity flex-1 relative"
+                {sortedCategories.map((catDef) => {
+                  const isActive = enabledCategories.has(catDef.id);
+                  return (
+                    <button
+                      key={catDef.id}
+                      type="button"
+                      onClick={() => toggleCategory(catDef.id)}
+                      className={`text-[11px] py-1 rounded border transition-all relative cursor-pointer hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-white/30 ${
+                        isActive
+                          ? 'bg-white/10 shadow-lg'
+                          : 'bg-transparent'
+                      }`}
                       style={{
-                        borderColor: catDef.borderColor,
-                        color: 'rgba(255, 255, 255, 0.85)',
+                        borderColor: isActive ? catDef.borderColor : `${catDef.borderColor}99`,
+                        borderWidth: isActive ? '2px' : '1px',
+                        color: isActive ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.7)',
                         paddingLeft: catDef.id === 'surface' ? '2.25rem' : '1.75rem',
                         paddingRight: '0.5rem',
-                        textAlign: 'center'
+                        textAlign: 'center',
+                        boxShadow: isActive ? `0 0 8px ${catDef.borderColor}40` : 'none'
                       }}
                     >
                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
@@ -259,9 +362,9 @@ export default function GenericPropControls({ className = '' }: { className?: st
                         )}
                       </span>
                       {catDef.label}
-                    </span>
-                  </label>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -269,34 +372,53 @@ export default function GenericPropControls({ className = '' }: { className?: st
           {/* Scrollable Content - Custom Scrollbar */}
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar">
             {groupedCatalog.length === 0 ? (
-              <div className="text-center text-white/40 py-6 text-xs">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="text-center text-white/40 py-6 text-xs"
+              >
                 No props found
-              </div>
+              </motion.div>
             ) : (
-              groupedCatalog.map(({ category, props }) => (
-                <div
-                  key={category.id}
-                  className="rounded-lg border-2 p-2 space-y-2"
-                  style={{ borderColor: category.borderColor }}
-                >
-                  {/* Category Props */}
-                  {props.map((entry) => {
-                    const alreadySpawned = isAlreadySpawned(entry.id);
-                    return (
-                      <button
-                        key={entry.id}
-                        type="button"
-                        disabled={alreadySpawned}
-                        className={`group w-full rounded-lg px-4 text-left text-xs flex items-center justify-between transition-all h-12
-                          ${alreadySpawned
-                            ? 'cursor-not-allowed'
-                            : 'hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-white/40'
-                          }`}
-                        style={{
-                          backgroundColor: category.bgColor
-                        }}
-                        onClick={() => !alreadySpawned && handleSpawn(entry.id)}
-                      >
+              <AnimatePresence mode="sync">
+                {groupedCatalog.map(({ category, props }) => (
+                  <motion.div
+                    key={category.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    className="rounded-lg border-2 p-2 space-y-2"
+                    style={{ borderColor: category.borderColor }}
+                  >
+                    {/* Category Props */}
+                    <AnimatePresence mode="sync">
+                      {props.map((entry, index) => {
+                        const alreadySpawned = isAlreadySpawned(entry.id);
+                        return (
+                          <motion.button
+                            key={entry.id}
+                            initial={{ opacity: 0, x: -8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 8 }}
+                            transition={{
+                              duration: 0.15,
+                              ease: 'easeOut',
+                              delay: index * 0.03
+                            }}
+                            type="button"
+                            disabled={alreadySpawned}
+                            className={`group w-full rounded-lg px-4 text-left text-xs flex items-center justify-between transition-all h-12
+                              ${alreadySpawned
+                                ? 'cursor-not-allowed'
+                                : 'hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-white/40'
+                              }`}
+                            style={{
+                              backgroundColor: category.bgColor
+                            }}
+                            onClick={() => !alreadySpawned && handleSpawn(entry.id)}
+                          >
                         <span className={`tracking-wide ${alreadySpawned ? 'text-black/50' : 'text-black/90'}`}>
                           {entry.label}
                         </span>
@@ -307,7 +429,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
                             </span>
                           )}
                           {/* Category badges (max 3) - wrapped in dark chip */}
-                          {!alreadySpawned && entry.categories.length > 0 && (
+                          {entry.categories.length > 0 && (
                             <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-black/15">
                               {entry.categories.slice(0, 3).map((cat) => {
                                 const catMeta = CATEGORY_DEFINITIONS[cat];
@@ -348,11 +470,13 @@ export default function GenericPropControls({ className = '' }: { className?: st
                             </div>
                           )}
                         </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))
+                      </motion.button>
+                        );
+                      })}
+                    </AnimatePresence>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             )}
           </div>
 
@@ -372,8 +496,9 @@ export default function GenericPropControls({ className = '' }: { className?: st
               background: rgba(255, 255, 255, 0.25);
             }
           `}</style>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -24,12 +24,12 @@ export type CategoryMetadata = {
 };
 
 export const CATEGORY_DEFINITIONS: Record<PropCategory, CategoryMetadata> = {
-  'desk': { id: 'desk', label: 'Desks', icon: '🪑', iconPath: '/icons/categories/desk_icon.png', borderColor: '#8B5E3C', bgColor: '#E8DDD5', order: 1 },
-  'surface': { id: 'surface', label: 'Surfaces', icon: '🖥️', borderColor: '#2c78b6', bgColor: '#D1E7F8', order: 2 },
-  'electronics': { id: 'electronics', label: 'Electronics', icon: '⚡', iconPath: '/icons/categories/extension.png', borderColor: '#55f4a8', bgColor: '#DCFEF0', order: 3 },
+  'desk': { id: 'desk', label: 'Desks', icon: '🪑', iconPath: '/icons/categories/desk_icon.png', borderColor: '#8B5E3C', bgColor: '#EBD9CE', order: 1 },
+  'surface': { id: 'surface', label: 'Surfaces', icon: '🖥️', borderColor: '#2c78b6', bgColor: '#C6E3F9', order: 2 },
+  'electronics': { id: 'electronics', label: 'Electronics', icon: '⚡', iconPath: '/icons/categories/extension.png', borderColor: '#55f4a8', bgColor: '#D3FFED', order: 3 },
   'desk-accessories': { id: 'desk-accessories', label: 'Accessories', icon: '🖱️', iconPath: '/icons/categories/mug.png', borderColor: '#6a6a6a', bgColor: '#E2E2E2', order: 4 },
-  'supplies': { id: 'supplies', label: 'Supplies', icon: '📝', borderColor: '#eeeb61', bgColor: '#FCFCE4', order: 5 },
-  'decorations': { id: 'decorations', label: 'Decorations', icon: '🎨', borderColor: '#E96D88', bgColor: '#FBE3E9', order: 6 },
+  'supplies': { id: 'supplies', label: 'Supplies', icon: '📝', iconPath: '/icons/categories/office-supplies.png', borderColor: '#eeeb61', bgColor: '#FFFEDE', order: 5 },
+  'decorations': { id: 'decorations', label: 'Decorations', icon: '🎨', iconPath: '/icons/categories/shelf2.png', borderColor: '#E96D88', bgColor: '#FCDEE6', order: 6 },
 };
 
 // Surface subtypes with their icons
@@ -61,6 +61,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     primaryCategory: 'desk',
     categories: ['desk', 'surface'],
+    surfaceType: 'board', // Desk is a horizontal surface/board
     surfaces: [
       {
         id: createSurfaceId('desk-surface'),

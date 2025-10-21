@@ -173,13 +173,7 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     scaleBeforeRef.current = null;
   }, [target, selectedGeneric, pushAction]);
 
-  const containerClass = ['pointer-events-none flex flex-col items-end gap-2', className]
-    .filter(Boolean)
-    .join(' ');
-
-  if (!target) return null;
-
-  const isDocked = target.status === 'editing' ? false : selectedGeneric?.docked ?? false;
+  const isDocked = target?.status === 'editing' ? false : selectedGeneric?.docked ?? false;
   const inputClass = isDocked
     ? "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed"
     : "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white focus:border-white/50 focus:outline-none";
@@ -187,9 +181,10 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     ? "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide opacity-40 cursor-not-allowed"
     : "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10";
 
+  if (!target) return null;
+
   return (
-    <div className={containerClass}>
-      <div className="pointer-events-auto w-60 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
+    <div className="pointer-events-auto w-60 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
         <div className="text-xs uppercase tracking-wide text-white/70">Adjusting</div>
         <div className="mt-1 font-semibold">{target.label}</div>
         <div className="text-xs text-white/60">{target.description}</div>
@@ -230,7 +225,6 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
             </button>
           </div>
         </div>
-      </div>
     </div>
   );
 }

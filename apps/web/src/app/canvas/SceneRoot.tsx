@@ -12,16 +12,17 @@ import { useLayoutValidation, type LayoutWarning } from "@/canvas/hooks/useLayou
 import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
 import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
 import { useUndoHistory } from "@/canvas/hooks/useUndoHistory";
-import LayoutControls from "@/canvas/LayoutControls";
-import PropScaleControls from "@/canvas/PropScaleControls";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
 import GenericPropControls from "@/canvas/GenericPropControls";
+import PropSelectionPanel from "@/canvas/PropSelectionPanel";
 import DeletePropButton from "@/canvas/DeletePropButton";
 import UndoToast from "@/canvas/UndoToast";
 import BoundsMarkingMode from "@/canvas/BoundsMarkingMode";
 import DeskDriveHint from "@/canvas/DeskDriveHint";
 import GroundGrid from "@/canvas/GroundGrid";
 import { clearSelection } from "@/state/selectionStore";
+import { closeCatalog } from "@/state/catalogState";
+import { motion, AnimatePresence } from "framer-motion";
 import { undockProp, spawnGenericProp, setGenericPropPosition, type Vec3, type GenericProp } from "@/state/genericPropsStore";
 import { PROP_CATALOG } from "@/data/propCatalog";
 import { useGenericProps } from "@/canvas/hooks/useGenericProps";
@@ -276,34 +277,57 @@ export default function SceneRoot() {
       <UndoToast />
       <DeskDriveHint />
       <div className="pointer-events-none absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
+        {/* LAYER 1: Top row - always mounted, stable position */}
         <div className="pointer-events-none flex items-center gap-2">
-          <DeletePropButton />
+          <AnimatePresence>
+            {selection && selection.kind === 'generic' && (
+              <motion.div
+                key="delete-button"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+              >
+                <DeletePropButton />
+              </motion.div>
+            )}
+          </AnimatePresence>
           <GenericPropControls />
         </div>
-        <LayoutControls />
-        <PropScaleControls />
+
+        {/* LAYER 2: Panels - mount/unmount with delay coordination */}
+        <PropSelectionPanel />
       </div>
-      <Canvas
+      <div
         style={{ width: "100%", height: "100%" }}
-        camera={{ position: [0, 1.35, 3.6], fov: 48 }}
-        dpr={[1, 1.5]}
-        frameloop="always"
-        gl={{ powerPreference: "low-power" }}
-        onCreated={({ camera, gl, scene }) => {
-          cameraRef.current = camera as THREE.PerspectiveCamera;
-          canvasElRef.current = gl.domElement as HTMLCanvasElement;
-
-          gl.outputColorSpace = THREE.SRGBColorSpace;
-          gl.toneMapping = THREE.ACESFilmicToneMapping;
-          gl.toneMappingExposure = 1.1;
-
-          const bg = new THREE.Color(0x0b0d12);
-          gl.setClearColor(bg, 1);
-          scene.fog = new THREE.Fog(bg, 6, 16);
+        onClick={(e) => {
+          // Only close if clicking directly on canvas, not on UI elements
+          if (e.target instanceof HTMLCanvasElement) {
+            closeCatalog();
+          }
         }}
-        onPointerDown={onPointerDown}
-        onPointerMissed={() => clearSelection()}
       >
+        <Canvas
+          style={{ width: "100%", height: "100%" }}
+          camera={{ position: [0, 1.35, 3.6], fov: 48 }}
+          dpr={[1, 1.5]}
+          frameloop="always"
+          gl={{ powerPreference: "low-power" }}
+          onCreated={({ camera, gl, scene }) => {
+            cameraRef.current = camera as THREE.PerspectiveCamera;
+            canvasElRef.current = gl.domElement as HTMLCanvasElement;
+
+            gl.outputColorSpace = THREE.SRGBColorSpace;
+            gl.toneMapping = THREE.ACESFilmicToneMapping;
+            gl.toneMappingExposure = 1.1;
+
+            const bg = new THREE.Color(0x0b0d12);
+            gl.setClearColor(bg, 1);
+            scene.fog = new THREE.Fog(bg, 6, 16);
+          }}
+          onPointerDown={onPointerDown}
+          onPointerMissed={() => clearSelection()}
+        >
         <Suspense fallback={null}>
           {/* Desk now rendered via GenericPropsLayer (auto-spawned on mount) */}
           <GroundGrid />
@@ -313,6 +337,7 @@ export default function SceneRoot() {
           <CameraRigController />
         </Suspense>
       </Canvas>
+      </div>
 
       {/* No desk banner (Frozen World) */}
       {!hasDesk && !isLoading && (
