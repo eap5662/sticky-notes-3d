@@ -1,6 +1,7 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSelection } from '@/canvas/hooks/useSelection';
+import { useDelayedVisibility } from '@/canvas/hooks/useDelayedVisibility';
 import LayoutControls from '@/canvas/LayoutControls';
 import PropScaleControls from '@/canvas/PropScaleControls';
 
@@ -8,60 +9,39 @@ export default function PropSelectionPanel() {
   const selection = useSelection();
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
 
-  // Track delayed showing to coordinate with catalog close animation
-  const [shouldShow, setShouldShow] = useState(false);
-  const prevSelectionIdRef = useRef<string | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Coordinate panel visibility with catalog/DELETE button animations
+  const shouldShow = useDelayedVisibility(!!selectedGenericId, {
+    enterDelay: 300, // Coordinate with catalog close
+    exitDelay: 200   // Match exit animation duration
+  });
 
-  // Coordinate showing/hiding with catalog transitions
+  // Freeze selection ID during exit to keep children rendering
+  // This prevents LayoutControls/PropScaleControls from returning null during exit animation
+  const [frozenSelectionId, setFrozenSelectionId] = useState<string | null>(null);
+
   useEffect(() => {
-    // Clear any pending timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+    if (selectedGenericId !== null) {
+      // Update frozen ID when selection changes
+      setFrozenSelectionId(selectedGenericId);
+    } else if (!shouldShow) {
+      // Clear frozen ID only when fully invisible
+      setFrozenSelectionId(null);
     }
-
-    const hadSelection = prevSelectionIdRef.current !== null;
-    const hasSelection = selectedGenericId !== null;
-
-    if (!hadSelection && hasSelection) {
-      // New selection (was null, now has value) - delay to let catalog close
-      // First hide immediately, then show after delay
-      setShouldShow(false);
-      timeoutRef.current = setTimeout(() => {
-        setShouldShow(true);
-        timeoutRef.current = null;
-      }, 300);
-    } else if (hadSelection && hasSelection) {
-      // Selection changed (different prop selected) - show immediately
-      setShouldShow(true);
-    } else {
-      // No selection - hide immediately (exit animation)
-      setShouldShow(false);
-    }
-
-    prevSelectionIdRef.current = selectedGenericId;
-
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-    };
-  }, [selectedGenericId]);
+    // Keep frozen ID during exit animation (selectedGenericId is null but shouldShow is still true)
+  }, [selectedGenericId, shouldShow]);
 
   return (
     <AnimatePresence>
-      {shouldShow && selectedGenericId && (
+      {shouldShow && (
         <motion.div
           initial={{ opacity: 0, x: 20, scale: 0.95 }}
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 20, scale: 0.95 }}
-          transition={{ duration: 0.25, ease: 'easeOut' }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
           className="pointer-events-none flex flex-col items-end gap-2"
         >
-          <LayoutControls />
-          <PropScaleControls className="" />
+          <LayoutControls overrideSelectionId={frozenSelectionId} />
+          <PropScaleControls className="" overrideSelectionId={frozenSelectionId} />
         </motion.div>
       )}
     </AnimatePresence>

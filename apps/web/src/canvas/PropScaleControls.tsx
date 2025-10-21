@@ -12,6 +12,7 @@ const STEP = 0.01;
 
 type PropScaleControlsProps = {
   className?: string;
+  overrideSelectionId?: string | null;
 };
 
 type GenericTarget = {
@@ -25,9 +26,11 @@ type GenericTarget = {
   status: 'editing' | 'dragging' | 'placed';
 };
 
-export default function PropScaleControls({ className = '' }: PropScaleControlsProps = {}) {
+export default function PropScaleControls({ className = '', overrideSelectionId }: PropScaleControlsProps = {}) {
   const selection = useSelection();
-  const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
+  const selectedGenericId = overrideSelectionId !== undefined
+    ? overrideSelectionId
+    : (selection && selection.kind === 'generic' ? selection.id : null);
   const selectedGeneric = useGenericProp(selectedGenericId);
   const pushAction = useUndoHistoryStore((s) => s.push);
 

@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useCallback, useEffect, useRef, useMemo } from "react";
+import { Suspense, useCallback, useEffect, useRef, useMemo, useState } from "react";
 import type { MutableRefObject } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
@@ -28,6 +28,7 @@ import { PROP_CATALOG } from "@/data/propCatalog";
 import { useGenericProps } from "@/canvas/hooks/useGenericProps";
 import { useLayoutFrame } from "@/canvas/hooks/useLayoutFrame";
 import { useSelection } from "@/canvas/hooks/useSelection";
+import { useDelayedVisibility } from "@/canvas/hooks/useDelayedVisibility";
 import type { LayoutFrame } from "@/state/layoutFrameStore";
 
 const DESK_MOVE_STEP = 0.25;
@@ -58,6 +59,13 @@ export default function SceneRoot() {
   }, [layoutFrame]);
 
   const selection = useSelection();
+  const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
+
+  // Coordinate DELETE button visibility with catalog/panel animations
+  const showDeleteButton = useDelayedVisibility(!!selectedGenericId, {
+    enterDelay: 300, // Coordinate with catalog close
+    exitDelay: 200   // Match exit animation duration
+  });
 
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const selectedIdRef = useRef<string | null>(null);
@@ -280,13 +288,18 @@ export default function SceneRoot() {
         {/* LAYER 1: Top row - always mounted, stable position */}
         <div className="pointer-events-none flex items-center gap-2">
           <AnimatePresence>
-            {selection && selection.kind === 'generic' && (
+            {showDeleteButton && (
               <motion.div
+                layout
                 key="delete-button"
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.2, ease: 'easeOut' }}
+                transition={{
+                  duration: 0.2,
+                  ease: 'easeOut',
+                  layout: { type: 'spring', bounce: 0.2, duration: 0.3 }
+                }}
               >
                 <DeletePropButton />
               </motion.div>

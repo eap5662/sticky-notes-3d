@@ -112,14 +112,17 @@ function HoldButton({ onActivate, className, children, holdIntervalMs }: HoldBut
 
 type LayoutControlsProps = {
   className?: string;
+  overrideSelectionId?: string | null;
 };
 
-export default function LayoutControls({ className = "" }: LayoutControlsProps = {}) {
+export default function LayoutControls({ className = "", overrideSelectionId }: LayoutControlsProps = {}) {
   const layoutFrame = useLayoutFrameState();
   const pushAction = useUndoHistoryStore((s) => s.push);
 
   const selection = useSelection();
-  const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
+  const selectedGenericId = overrideSelectionId !== undefined
+    ? overrideSelectionId
+    : (selection && selection.kind === 'generic' ? selection.id : null);
   const selectedGeneric = useGenericProp(selectedGenericId);
 
   // Find desk prop (now in generic props store)
@@ -166,33 +169,25 @@ export default function LayoutControls({ className = "" }: LayoutControlsProps =
   const handleRotateLeft = useCallback(() => {
     if (!rotationTarget || !selectedGeneric) return;
     const before = selectedGeneric.rotation;
-    rotateGenericProp(rotationTarget.id, -ROTATE_STEP_DEG);
-    // Get updated rotation (need to wait a tick for state update)
-    setTimeout(() => {
-      const after = selectedGeneric.rotation;
-      pushAction({
-        type: 'rotate',
-        propId: rotationTarget.id,
-        before,
-        after,
-      });
-    }, 0);
+    const after = rotateGenericProp(rotationTarget.id, -ROTATE_STEP_DEG);
+    pushAction({
+      type: 'rotate',
+      propId: rotationTarget.id,
+      before,
+      after,
+    });
   }, [rotationTarget, selectedGeneric, pushAction]);
 
   const handleRotateRight = useCallback(() => {
     if (!rotationTarget || !selectedGeneric) return;
     const before = selectedGeneric.rotation;
-    rotateGenericProp(rotationTarget.id, ROTATE_STEP_DEG);
-    // Get updated rotation (need to wait a tick for state update)
-    setTimeout(() => {
-      const after = selectedGeneric.rotation;
-      pushAction({
-        type: 'rotate',
-        propId: rotationTarget.id,
-        before,
-        after,
-      });
-    }, 0);
+    const after = rotateGenericProp(rotationTarget.id, ROTATE_STEP_DEG);
+    pushAction({
+      type: 'rotate',
+      propId: rotationTarget.id,
+      before,
+      after,
+    });
   }, [rotationTarget, selectedGeneric, pushAction]);
 
   const handleDock = useCallback(() => {

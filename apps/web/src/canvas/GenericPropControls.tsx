@@ -8,6 +8,7 @@ import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
 import { useGenericProps } from './hooks/useGenericProps';
 import { useUndoHistoryStore, type GenericPropSnapshot } from '@/state/undoHistoryStore';
 import { registerCatalogCloseHandler } from '@/state/catalogState';
+import { useDelayedVisibility } from './hooks/useDelayedVisibility';
 
 const PANEL_CLASS = 'pointer-events-auto w-56 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg';
 const BUTTON_CLASS = 'pointer-events-auto rounded-full bg-black/70 px-3 py-1 text-xs uppercase tracking-wide text-white shadow hover:bg-black/80';
@@ -19,19 +20,12 @@ export default function GenericPropControls({ className = '' }: { className?: st
   const [enabledCategories, setEnabledCategories] = useState<Set<PropCategory>>(new Set());
   const pushAction = useUndoHistoryStore((s) => s.push);
 
-  // Track delayed showing to coordinate with prop panel close animation
-  const [shouldShow, setShouldShow] = useState(false);
-  const prevIsOpenRef = useRef(false);
-  const selectionExistedBeforeOpenRef = useRef(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Track whether a selection exists BEFORE opening catalog (when catalog is closed)
-  useEffect(() => {
-    if (!isOpen) {
-      const currentSelection = getSelection();
-      selectionExistedBeforeOpenRef.current = currentSelection !== null;
-    }
-  }, [isOpen]);
+  // Coordinate catalog visibility with prop selection panel animations
+  // Always delay entrance to be safe (prop panels might be closing)
+  const shouldShow = useDelayedVisibility(isOpen, {
+    enterDelay: 300, // Coordinate with prop panel close
+    exitDelay: 0     // No delay needed for catalog exit
+  });
 
   // Mutual exclusivity logic: Only one UI can be active at a time
   // (1) When user selects a prop from scene → close catalog
@@ -62,49 +56,6 @@ export default function GenericPropControls({ className = '' }: { className?: st
     const unregister = registerCatalogCloseHandler(() => setIsOpen(false));
     return unregister;
   }, []);
-
-  // (3) Coordinate showing/hiding with prop panel transitions
-  useEffect(() => {
-    // Clear any pending timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-
-    const wasOpen = prevIsOpenRef.current;
-    const nowOpen = isOpen;
-
-    if (!wasOpen && nowOpen) {
-      // Catalog opening - check if we just cleared a selection
-      if (selectionExistedBeforeOpenRef.current) {
-        // Had a selection before opening - delay to let prop panel close
-        // First hide immediately, then show after delay
-        setShouldShow(false);
-        timeoutRef.current = setTimeout(() => {
-          setShouldShow(true);
-          timeoutRef.current = null;
-        }, 300);
-      } else {
-        // No selection before - show immediately
-        setShouldShow(true);
-      }
-    } else if (nowOpen) {
-      // Staying open - keep showing
-      setShouldShow(true);
-    } else {
-      // Closing - hide immediately (exit animation)
-      setShouldShow(false);
-    }
-
-    prevIsOpenRef.current = nowOpen;
-
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-    };
-  }, [isOpen]);
 
   // Get all spawned props to check for duplicates
   const genericProps = useGenericProps();
@@ -385,9 +336,9 @@ export default function GenericPropControls({ className = '' }: { className?: st
                 {groupedCatalog.map(({ category, props }) => (
                   <motion.div
                     key={category.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
                     transition={{ duration: 0.2, ease: 'easeOut' }}
                     className="rounded-lg border-2 p-2 space-y-2"
                     style={{ borderColor: category.borderColor }}
@@ -398,14 +349,17 @@ export default function GenericPropControls({ className = '' }: { className?: st
                         const alreadySpawned = isAlreadySpawned(entry.id);
                         return (
                           <motion.button
+                            layout
                             key={entry.id}
-                            initial={{ opacity: 0, x: -8 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: 8 }}
+                            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -8, scale: 0.96 }}
                             transition={{
-                              duration: 0.15,
-                              ease: 'easeOut',
-                              delay: index * 0.03
+                              layout: { type: 'spring', bounce: 0.15, duration: 0.4 },
+                              opacity: { duration: 0.2 },
+                              y: { duration: 0.2, ease: 'easeOut' },
+                              scale: { duration: 0.2, ease: 'easeOut' },
+                              delay: index * 0.025
                             }}
                             type="button"
                             disabled={alreadySpawned}

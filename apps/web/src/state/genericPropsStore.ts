@@ -209,13 +209,16 @@ function degToRad(deg: number) {
   return (deg * Math.PI) / 180;
 }
 
-export function rotateGenericProp(id: GenericPropId, deltaYDeg: number) {
+export function rotateGenericProp(id: GenericPropId, deltaYDeg: number): Vec3 {
+  let newRotation: Vec3 = [0, 0, 0];
   updateProp(id, (prop) => {
     const currentYRad = prop.rotation[1];
     const deltaYRad = degToRad(deltaYDeg);
     const nextYRad = wrapRadians(currentYRad + deltaYRad);
-    return { ...prop, rotation: [prop.rotation[0], nextYRad, prop.rotation[2]] };
+    newRotation = [prop.rotation[0], nextYRad, prop.rotation[2]] as Vec3;
+    return { ...prop, rotation: newRotation };
   });
+  return newRotation;
 }
 
 export function getGenericPropRotationDeg(id: GenericPropId): number {
