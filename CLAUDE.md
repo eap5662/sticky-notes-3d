@@ -34,6 +34,30 @@ The codebase recently underwent a major refactor migrating from hardcoded desk/m
 
 ---
 
+## 🆕 Hover Preview System (February 2025)
+
+We added a lightweight hover preview for catalog items so users can see a live GLB spin before spawning props.
+
+**Key Components:**
+- `apps/web/src/canvas/GenericPropControls.tsx`
+  - Tracks hover intent with a 180 ms delay (`hoverIntentRef`) so quick scrolls don’t spin up previews.
+  - Captures the hovered button’s `DOMRect` and keeps it updated via scroll/resize listeners.
+  - Mounts `<PropPreviewOverlay entry rect />` only while the catalog is open and a selection is active.
+- `apps/web/src/canvas/PropPreviewOverlay.tsx`
+  - Client component that positions a 220×180 tooltip beside the hovered button.
+  - Creates a dedicated Three.js renderer per hover, with guarded setup/teardown (`forceContextLoss`) to avoid exhausting WebGL contexts or touching the main scene renderer.
+  - Loads GLBs through a shared `GLTFLoader` configured with Draco + Meshopt decoders; cached `PreparedPreview` objects keep load times tiny for repeated hovers.
+  - Normalises each scene (uniform scale, centred origin) and orbits the camera around the prop’s bounding sphere centre so even wide or tall assets stay framed.
+  - Animation loop rotates the camera while keeping it focused on the stored centre; the mesh itself stays static, which prevents lopsided props from drifting out of view.
+
+**Implementation Notes:**
+- Hover overlay is pointer-transparent by default (`pointer-events-none`) so it doesn’t block scrolling or catalog interactions.
+- Renderer is only created when the overlay is visible; on unmount we call `forceContextLoss()` + `dispose()` to free the GL context immediately.
+- Preview panel reuses the same styling system as the top-right HUD (absolute positioned from `SceneRoot`), so pay attention to z-indices if you adjust HUD layers.
+- If you add new catalog entries with unusual proportions, the orbit camera automatically adapts based on bounding sphere, but you can tweak `distance = radius * 2.4` if you need tighter or looser framing.
+
+When extending this feature (e.g., adding metadata to the tooltip), keep the hover delay and context-management in mind—spawning multiple canvases simultaneously will bring back the “Too many active WebGL contexts” warning.
+
 ## Development Commands
 
 **Starting the development servers:**

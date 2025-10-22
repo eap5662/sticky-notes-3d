@@ -1,7 +1,7 @@
 import { useCallback, useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { PROP_CATALOG, CATEGORY_DEFINITIONS, SURFACE_TYPE_ICONS, type PropCategory } from '@/data/propCatalog';
+import { PROP_CATALOG, CATEGORY_DEFINITIONS, SURFACE_TYPE_ICONS, type PropCategory, type PropCatalogEntry } from '@/data/propCatalog';
 import { spawnGenericProp } from '@/state/genericPropsStore';
 import { setSelection, clearSelection, getSelection, subscribeSelection } from '@/state/selectionStore';
 import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
@@ -9,6 +9,8 @@ import { useGenericProps } from './hooks/useGenericProps';
 import { useUndoHistoryStore, type GenericPropSnapshot } from '@/state/undoHistoryStore';
 import { registerCatalogCloseHandler } from '@/state/catalogState';
 import { useDelayedVisibility } from './hooks/useDelayedVisibility';
+import PropPreviewOverlay from '@/canvas/PropPreviewOverlay';
+import { useGLTF } from '@react-three/drei';
 
 const PANEL_CLASS = 'pointer-events-auto w-56 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg';
 const BUTTON_CLASS =
@@ -20,6 +22,9 @@ export default function GenericPropControls({ className = '' }: { className?: st
   const [searchQuery, setSearchQuery] = useState('');
   const [enabledCategories, setEnabledCategories] = useState<Set<PropCategory>>(new Set());
   const pushAction = useUndoHistoryStore((s) => s.push);
+  const [hoveredItem, setHoveredItem] = useState<{ entry: PropCatalogEntry; element: HTMLElement } | null>(null);
+  const [hoverRect, setHoverRect] = useState<DOMRectReadOnly | null>(null);
+  const hoverIntentRef = useRef<number | null>(null);
 
   // Coordinate catalog visibility with prop selection panel animations
   // Always delay entrance to be safe (prop panels might be closing)
@@ -35,6 +40,55 @@ export default function GenericPropControls({ className = '' }: { className?: st
       setIsCatalogRendering(true);
     }
   }, [shouldShow]);
+
+  useEffect(() => {
+    const element = hoveredItem?.element;
+    if (!element) {
+      setHoverRect(null);
+      return undefined;
+    }
+
+    let frame = 0;
+
+    const updateRect = () => {
+      setHoverRect(element.getBoundingClientRect());
+    };
+
+    const scheduleUpdate = () => {
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        updateRect();
+      });
+    };
+
+    updateRect();
+
+    window.addEventListener('scroll', scheduleUpdate, true);
+    window.addEventListener('resize', scheduleUpdate);
+
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => scheduleUpdate());
+      observer.observe(element);
+    }
+
+    return () => {
+      window.removeEventListener('scroll', scheduleUpdate, true);
+      window.removeEventListener('resize', scheduleUpdate);
+      if (observer) observer.disconnect();
+      if (frame !== 0) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [hoveredItem]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setHoveredItem(null);
+      setHoverRect(null);
+    }
+  }, [isOpen]);
 
   // Mutual exclusivity logic: Only one UI can be active at a time
   // (1) When user selects a prop from scene → close catalog
@@ -236,6 +290,33 @@ export default function GenericPropControls({ className = '' }: { className?: st
     setIsOpen((prev) => !prev);
   }, []);
 
+  const handleEntryHoverStart = useCallback((entry: PropCatalogEntry, element: HTMLElement) => {
+    useGLTF.preload(entry.url);
+    if (hoverIntentRef.current !== null) {
+      window.clearTimeout(hoverIntentRef.current);
+    }
+    hoverIntentRef.current = window.setTimeout(() => {
+      setHoveredItem({ entry, element });
+    }, 180);
+  }, []);
+
+  const handleEntryHoverEnd = useCallback(() => {
+    if (hoverIntentRef.current !== null) {
+      window.clearTimeout(hoverIntentRef.current);
+      hoverIntentRef.current = null;
+    }
+    setHoveredItem(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hoverIntentRef.current !== null) {
+        window.clearTimeout(hoverIntentRef.current);
+        hoverIntentRef.current = null;
+      }
+    };
+  }, []);
+
   const totalProps = groupedCatalog.reduce((sum, group) => sum + group.props.length, 0);
 
   const showAddButton = !isOpen && !isCatalogRendering;
@@ -259,6 +340,11 @@ export default function GenericPropControls({ className = '' }: { className?: st
           </motion.button>
         )}
       </AnimatePresence>
+
+      <PropPreviewOverlay
+        entry={shouldShow ? hoveredItem?.entry ?? null : null}
+        rect={hoverRect}
+      />
 
       <AnimatePresence
         onExitComplete={() => {
@@ -408,6 +494,10 @@ export default function GenericPropControls({ className = '' }: { className?: st
                               backgroundColor: category.bgColor
                             }}
                             onClick={() => !alreadySpawned && handleSpawn(entry.id)}
+                            onMouseEnter={(event) => handleEntryHoverStart(entry, event.currentTarget)}
+                            onMouseLeave={handleEntryHoverEnd}
+                            onFocus={(event) => handleEntryHoverStart(entry, event.currentTarget)}
+                            onBlur={handleEntryHoverEnd}
                           >
                         <span className={`tracking-wide ${alreadySpawned ? 'text-black/50' : 'text-black/90'}`}>
                           {entry.label}
