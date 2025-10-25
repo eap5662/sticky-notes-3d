@@ -206,10 +206,10 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     ],
   },
 
-  // Props with Interactive Surfaces (1) - 2025-10-24 Batch
+  // Props with Interactive Surfaces (3) - 2025-10-24 Batch
   {
     id: 'modified-corner-desk',
-    label: 'Corner Desk',
+    label: 'Modified Corner Desk',
     url: '/models/modified-corner-desk.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     defaultScale: 2.5, // Normalized to 1x in UI
@@ -219,6 +219,44 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     surfaces: [
       {
         id: createSurfaceId('modified-corner-desk-desk'),
+        kind: 'desk',
+        nodeName: 'desk-top-plane',
+        options: { normalSide: 'positive' },
+      },
+    ],
+  },
+  {
+    id: 'grey-computer-desk',
+    label: 'Grey Computer Desk',
+    url: '/models/Grey-Computer-Desk.glb',
+    anchor: {
+      type: 'bbox',
+      align: { x: 'center', y: 'min', z: 'center' },
+    },
+    primaryCategory: 'desk',
+    categories: ['desk', 'surface'],
+    surfaceType: 'board',
+    surfaces: [
+      {
+        id: createSurfaceId('grey-computer-desk-desk'),
+        kind: 'desk',
+        nodeName: 'desk-top-plane',
+        options: { normalSide: 'positive' },
+      },
+    ],
+  },
+  {
+    id: 'tan-desk',
+    label: 'Tan Desk',
+    url: '/models/Tan-Desk.glb',
+    anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
+    defaultScale: 1.75, // Normalized to 1x in UI
+    primaryCategory: 'desk',
+    categories: ['desk', 'surface'],
+    surfaceType: 'board',
+    surfaces: [
+      {
+        id: createSurfaceId('tan-desk-desk'),
         kind: 'desk',
         nodeName: 'desk-top-plane',
         options: { normalSide: 'positive' },

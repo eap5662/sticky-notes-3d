@@ -202,7 +202,12 @@ useEffect(() => {
     return Object.values(CATEGORY_DEFINITIONS).sort((a, b) => a.order - b.order);
   }, []);
 
-  const disabledDeskId = swapStoreState.active ? swapStoreState.targetDeskId : null;
+  const swapTargetDeskId = swapStoreState.active ? swapStoreState.targetDeskId : null;
+  const swapTargetCatalogId = useMemo(() => {
+    if (!swapTargetDeskId) return null;
+    const targetDesk = genericProps.find((prop) => prop.id === swapTargetDeskId);
+    return targetDesk?.catalogId ?? null;
+  }, [genericProps, swapTargetDeskId]);
 
   // Filtered and grouped catalog
   const groupedCatalog = useMemo(() => {
@@ -536,7 +541,7 @@ useEffect(() => {
                     <AnimatePresence mode="sync">
                       {props.map((entry, index) => {
                         const alreadySpawned = isSwapActive ? false : isAlreadySpawned(entry.id);
-                        const isCurrentDesk = isSwapActive && disabledDeskId === entry.id;
+                        const isCurrentDesk = isSwapActive && swapTargetCatalogId === entry.id;
                         const isDisabled = isCurrentDesk || alreadySpawned;
                         const isHovered = hoveredItem?.entry.id === entry.id;
                         return (

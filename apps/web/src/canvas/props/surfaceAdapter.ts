@@ -111,11 +111,11 @@ export function extractSurfaceFromNode(
   const boundsLocal = computeLocalBounds(node);
   const { sorted, extents } = sortAxesByExtent(boundsLocal);
 
-  if (sorted[2].extent <= 1e-6) {
-    throw new Error(`surfaceFromNode: Node "${node.name}" is degenerate (no thickness axis)`);
-  }
-
   const [uAxisKey, vAxisKey, thicknessKey] = sorted;
+  const rawThickness = extents[thicknessKey.axis];
+  const THIN_SURFACE_EPS = 1e-5;
+  const isThinSurface = rawThickness <= 1e-6;
+  const thickness = isThinSurface ? THIN_SURFACE_EPS : rawThickness; // Synthesize a tiny thickness so single-face planes still work.
   const { xDir, yDir, zDir } = getAxisVectors(node.matrixWorld);
   const axisDirs: Record<AxisKey, THREE.Vector3> = { x: xDir, y: yDir, z: zDir };
 
@@ -131,7 +131,6 @@ export function extractSurfaceFromNode(
 
   const uLength = extents[uAxisKey.axis];
   const vLength = extents[vAxisKey.axis];
-  const thickness = extents[thicknessKey.axis];
 
   const localOrigin = new THREE.Vector3();
   localOrigin.setComponent(AXIS_INDICES[uAxisKey.axis], boundsLocal.min[uAxisKey.axis]);
@@ -201,4 +200,3 @@ export function pointFromNode(node: THREE.Object3D): THREE.Vector3 {
   node.updateWorldMatrix(true, true);
   return new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
 }
-
