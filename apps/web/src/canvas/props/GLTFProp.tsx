@@ -1,9 +1,9 @@
 import * as React from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
-import { extractSurfaceFromNode, type SurfaceExtractOptions } from './surfaceAdapter';
+import { extractSurfaceFromNode, type SurfaceExtractOptions, type SurfaceExtractResult } from './surfaceAdapter';
 import { registerSurface, unregisterSurface, type Surface } from '@/canvas/surfaces';
-import { setSurfaceMeta, clearSurfaceMeta } from '@/state/surfaceMetaStore';
+import { clearSurfaceMeta } from '@/state/surfaceMetaStore';
 
 const toVec3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
 
@@ -12,7 +12,7 @@ type SurfaceReg = {
   kind: Surface['kind'];
   nodeName: string;
   options?: SurfaceExtractOptions;
-  onExtract?: (info: ReturnType<typeof extractSurfaceFromNode>['debug']) => void;
+  onExtract?: (result: SurfaceExtractResult) => void;
 };
 
 type AnchorAxis = 'min' | 'center' | 'max';
@@ -141,16 +141,10 @@ export default function GLTFProp({
           return null;
         }
         try {
-          const { surface, debug } = extractSurfaceFromNode(node, id, kind, options);
+          const result = extractSurfaceFromNode(node, id, kind, options);
+          const { surface } = result;
           registerSurface(surface);
-          setSurfaceMeta(id, {
-            center: toVec3(debug.center),
-            normal: toVec3(debug.normal),
-            uDir: toVec3(debug.uDir),
-            vDir: toVec3(debug.vDir),
-            extents: debug.extents,
-          });
-          onExtract?.(debug);
+          onExtract?.(result);
         } catch (err) {
           console.error(`[GLTFProp] failed to derive surface ${id} from node "${nodeName}"`, err);
           return null;

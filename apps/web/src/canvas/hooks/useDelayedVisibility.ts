@@ -58,6 +58,12 @@ export function useDelayedVisibility(
       timeoutRef.current = null;
     }
 
+    if (enterDelay <= 0 && exitDelay <= 0) {
+      setIsVisible(shouldBeVisible);
+      prevVisibilityRef.current = shouldBeVisible;
+      return;
+    }
+
     const wasVisible = prevVisibilityRef.current;
     const shouldShow = shouldBeVisible;
 

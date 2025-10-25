@@ -35,6 +35,8 @@ const previewPromiseCache = new Map<string, Promise<PreparedPreview>>();
 let sharedLoader: GLTFLoader | null = null;
 let sharedDraco: DRACOLoader | null = null;
 let loaderConfigured = false;
+let sharedRenderer: THREE.WebGLRenderer | null = null;
+let rendererUsers = 0;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -133,10 +135,38 @@ async function loadPreview(entry: PropCatalogEntry): Promise<PreparedPreview> {
   return promise;
 }
 
+function acquireRenderer(): THREE.WebGLRenderer | null {
+  if (!sharedRenderer) {
+    try {
+      sharedRenderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+      });
+      sharedRenderer.outputColorSpace = THREE.SRGBColorSpace;
+      sharedRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+      sharedRenderer.toneMappingExposure = 1.0;
+    } catch (error) {
+      console.error("[preview] failed to initialise renderer", error);
+      sharedRenderer = null;
+      return null;
+    }
+  }
+  rendererUsers += 1;
+  return sharedRenderer;
+}
+
+function releaseRenderer() {
+  rendererUsers = Math.max(0, rendererUsers - 1);
+  if (rendererUsers === 0 && sharedRenderer) {
+    sharedRenderer.setAnimationLoop(null);
+    sharedRenderer.clear();
+  }
+}
+
 export default function PropPreviewOverlay({ entry, rect }: PropPreviewOverlayProps) {
   const [state, setState] = useState<PreviewState>({ status: "idle" });
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -152,21 +182,34 @@ export default function PropPreviewOverlay({ entry, rect }: PropPreviewOverlayPr
   const basicShouldRender = !!entry && !!rect;
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!basicShouldRender || !canvas) return;
+    if (!basicShouldRender) {
+      setState({ status: "idle" });
+    }
+  }, [basicShouldRender]);
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      alpha: true,
-      antialias: true,
-      preserveDrawingBuffer: true,
-    });
+  useEffect(() => {
+    if (!basicShouldRender) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const renderer = acquireRenderer();
+    if (!renderer) {
+      setState({ status: "error", reason: "context-lost" });
+      return;
+    }
+    rendererRef.current = renderer;
+    const canvas = renderer.domElement;
+    if (canvas.parentElement && canvas.parentElement !== container) {
+      canvas.parentElement.removeChild(canvas);
+    }
+    if (canvas.parentElement !== container) {
+      container.appendChild(canvas);
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     renderer.setSize(PREVIEW_WIDTH, PREVIEW_HEIGHT, false);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    rendererRef.current = renderer;
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    setHasContext(true);
 
     const handleContextLost = (event: Event) => {
       event.preventDefault();
@@ -178,14 +221,11 @@ export default function PropPreviewOverlay({ entry, rect }: PropPreviewOverlayPr
 
     return () => {
       canvas.removeEventListener("webglcontextlost", handleContextLost);
-      if (rendererRef.current) {
-        rendererRef.current.forceContextLoss();
-        rendererRef.current.dispose();
-      } else {
-        renderer.forceContextLoss();
-        renderer.dispose();
+      if (canvas.parentElement === container) {
+        container.removeChild(canvas);
       }
       rendererRef.current = null;
+      releaseRenderer();
     };
   }, [basicShouldRender]);
 
@@ -473,12 +513,7 @@ export default function PropPreviewOverlay({ entry, rect }: PropPreviewOverlayPr
               className="relative flex-1 overflow-hidden rounded-md bg-black/60"
               style={{ minHeight: PREVIEW_HEIGHT - 60 }}
             >
-              <canvas
-                ref={canvasRef}
-                width={PREVIEW_WIDTH}
-                height={PREVIEW_HEIGHT}
-                className="h-full w-full bg-black/30"
-              />
+              <div ref={containerRef} className="h-full w-full bg-black/30" />
               {renderStatusMessage()}
               <div className="pointer-events-none absolute bottom-1 right-1 text-[9px] uppercase tracking-wide text-white/30">
                 {state.status}

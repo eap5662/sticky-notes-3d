@@ -6,11 +6,24 @@ import { spawnGenericProp } from '@/state/genericPropsStore';
 import { setSelection, clearSelection, getSelection, subscribeSelection } from '@/state/selectionStore';
 import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
 import { useGenericProps } from './hooks/useGenericProps';
-import { useUndoHistoryStore, type GenericPropSnapshot } from '@/state/undoHistoryStore';
+import { useUndoHistoryStore, createSnapshotFromProp } from '@/state/undoHistoryStore';
 import { registerCatalogCloseHandler } from '@/state/catalogState';
 import { useDelayedVisibility } from './hooks/useDelayedVisibility';
 import PropPreviewOverlay from '@/canvas/PropPreviewOverlay';
 import { useGLTF } from '@react-three/drei';
+import { useDeskSwapStore, completeDeskSwap, cancelDeskSwap, setDeskSwapPreviewEntry } from '@/state/deskSwapStore';
+
+function lightenHex(base: string, amount = 0.2): string {
+  const hex = base.startsWith('#') ? base.slice(1) : base;
+  if (hex.length !== 6) return base;
+  const num = parseInt(hex, 16);
+  const clamp = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+  const apply = (channel: number) => clamp(channel + (255 - channel) * amount);
+  const r = apply((num >> 16) & 0xff);
+  const g = apply((num >> 8) & 0xff);
+  const b = apply(num & 0xff);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
 
 const PANEL_CLASS = 'pointer-events-auto w-56 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg';
 const BUTTON_CLASS =
@@ -25,6 +38,13 @@ export default function GenericPropControls({ className = '' }: { className?: st
   const [hoveredItem, setHoveredItem] = useState<{ entry: PropCatalogEntry; element: HTMLElement } | null>(null);
   const [hoverRect, setHoverRect] = useState<DOMRectReadOnly | null>(null);
   const hoverIntentRef = useRef<number | null>(null);
+  const prevCategoriesRef = useRef<Set<PropCategory> | null>(null);
+  const prevSearchRef = useRef<string>('');
+
+  const swapStoreState = useDeskSwapStore((s) => s);
+  const isSwapActive = swapStoreState.active;
+  const pendingReviewEntryId = swapStoreState.pendingReview?.entry.id ?? null;
+  const hasPreviewState = Boolean(swapStoreState.previewEntry || swapStoreState.previewAnalysis);
 
   // Coordinate catalog visibility with prop selection panel animations
   // Always delay entrance to be safe (prop panels might be closing)
@@ -114,6 +134,29 @@ export default function GenericPropControls({ className = '' }: { className?: st
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (isSwapActive) {
+      prevCategoriesRef.current = new Set(enabledCategories);
+      prevSearchRef.current = searchQuery;
+      setEnabledCategories(new Set(['desk']));
+      setSearchQuery('');
+      setIsOpen(true);
+    } else if (prevCategoriesRef.current) {
+      setEnabledCategories(prevCategoriesRef.current);
+      setSearchQuery(prevSearchRef.current);
+      prevCategoriesRef.current = null;
+    }
+  }, [isSwapActive]);
+
+const prevIsOpenRef = useRef(isOpen);
+useEffect(() => {
+  const prevIsOpen = prevIsOpenRef.current;
+  prevIsOpenRef.current = isOpen;
+  if (prevIsOpen && !isOpen && isSwapActive) {
+    cancelDeskSwap();
+  }
+}, [isOpen, isSwapActive]);
+
   // (2b) Register catalog close handler for external control (scene clicks)
   useEffect(() => {
     const unregister = registerCatalogCloseHandler(() => setIsOpen(false));
@@ -140,6 +183,9 @@ export default function GenericPropControls({ className = '' }: { className?: st
 
   // Toggle category filter
   const toggleCategory = useCallback((category: PropCategory) => {
+    if (isSwapActive) {
+      return;
+    }
     setEnabledCategories(prev => {
       const next = new Set(prev);
       if (next.has(category)) {
@@ -149,12 +195,14 @@ export default function GenericPropControls({ className = '' }: { className?: st
       }
       return next;
     });
-  }, []);
+  }, [isSwapActive]);
 
   // Get sorted categories by order
   const sortedCategories = useMemo(() => {
     return Object.values(CATEGORY_DEFINITIONS).sort((a, b) => a.order - b.order);
   }, []);
+
+  const disabledDeskId = swapStoreState.active ? swapStoreState.targetDeskId : null;
 
   // Filtered and grouped catalog
   const groupedCatalog = useMemo(() => {
@@ -214,7 +262,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
     }
 
     // Build groups array and sort
-    let groups = sortedCategories
+    const groups = sortedCategories
       .map(catDef => ({ category: catDef, props: grouped.get(catDef.id) || [] }))
       .filter(group => group.props.length > 0);
 
@@ -239,6 +287,15 @@ export default function GenericPropControls({ className = '' }: { className?: st
     const entry = PROP_CATALOG.find((item) => item.id === catalogId);
     if (!entry) return;
 
+    if (isSwapActive) {
+      const success = completeDeskSwap(entry);
+      if (success) {
+        setIsOpen(false);
+        setDeskSwapPreviewEntry(null);
+      }
+      return;
+    }
+
     // Calculate spawn position - if desk exists, spawn at desk height + clearance
     // Otherwise use default staging position
     let position: [number, number, number] | undefined;
@@ -259,18 +316,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
     });
 
     // Push spawn action to undo stack
-    const snapshot: GenericPropSnapshot = {
-      id: prop.id,
-      catalogId: prop.catalogId ?? '',
-      label: prop.label,
-      url: prop.url,
-      anchor: prop.anchor,
-      position: prop.position,
-      rotation: prop.rotation,
-      scale: prop.scale,
-      docked: prop.docked,
-      dockOffset: prop.dockOffset,
-    };
+    const snapshot = createSnapshotFromProp(prop);
 
     pushAction({
       type: 'spawn',
@@ -280,7 +326,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
 
     // Select the newly spawned prop (catalog will auto-close via selection subscription)
     setSelection({ kind: 'generic', id: prop.id });
-  }, [deskHeight, pushAction]);
+  }, [deskHeight, pushAction, isSwapActive, setIsOpen, completeDeskSwap]);
 
   const containerClass = ['pointer-events-none flex items-start justify-end gap-2', className]
     .filter(Boolean)
@@ -297,8 +343,11 @@ export default function GenericPropControls({ className = '' }: { className?: st
     }
     hoverIntentRef.current = window.setTimeout(() => {
       setHoveredItem({ entry, element });
+      if (isSwapActive) {
+        setDeskSwapPreviewEntry(entry);
+      }
     }, 180);
-  }, []);
+  }, [isSwapActive]);
 
   const handleEntryHoverEnd = useCallback(() => {
     if (hoverIntentRef.current !== null) {
@@ -306,7 +355,10 @@ export default function GenericPropControls({ className = '' }: { className?: st
       hoverIntentRef.current = null;
     }
     setHoveredItem(null);
-  }, []);
+    if (isSwapActive && !pendingReviewEntryId && hasPreviewState) {
+      setDeskSwapPreviewEntry(null);
+    }
+  }, [isSwapActive, pendingReviewEntryId, hasPreviewState]);
 
   useEffect(() => {
     return () => {
@@ -319,7 +371,14 @@ export default function GenericPropControls({ className = '' }: { className?: st
 
   const totalProps = groupedCatalog.reduce((sum, group) => sum + group.props.length, 0);
 
-  const showAddButton = !isOpen && !isCatalogRendering;
+  useEffect(() => {
+    if (!isCatalogRendering) {
+      setHoveredItem(null);
+      setHoverRect(null);
+    }
+  }, [isCatalogRendering]);
+
+  const showAddButton = !isOpen && !isCatalogRendering && !isSwapActive;
 
   return (
     <div className={containerClass} style={{ marginTop: '0.35rem' }}>
@@ -385,6 +444,7 @@ export default function GenericPropControls({ className = '' }: { className?: st
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full rounded-md border border-white/30 bg-black/50 px-3 py-1 text-sm text-white placeholder:text-white/40 focus:border-white/60 focus:outline-none focus:ring-2 focus:ring-white/20 transition-all mb-2"
+              disabled={isSwapActive}
             />
 
             {/* Category Filters */}
@@ -398,7 +458,8 @@ export default function GenericPropControls({ className = '' }: { className?: st
                       key={catDef.id}
                       type="button"
                       onClick={() => toggleCategory(catDef.id)}
-                      className={`text-[11px] py-1 rounded border transition-all relative cursor-pointer hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-white/30 ${
+                      disabled={isSwapActive}
+                      className={`text-[11px] py-1 rounded border transition-all relative cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-white/30 ${
                         isActive
                           ? 'bg-white/10 shadow-lg'
                           : 'bg-transparent'
@@ -440,6 +501,12 @@ export default function GenericPropControls({ className = '' }: { className?: st
                 })}
               </div>
             </div>
+
+            {isSwapActive && (
+              <div className="mt-3 rounded-md border border-teal-400/40 bg-teal-500/10 px-3 py-2 text-[11px] text-teal-200">
+                Swap mode active — choose a desk to replace the current one or close the catalog to cancel.
+              </div>
+            )}
           </div>
 
           {/* Scrollable Content - Custom Scrollbar */}
@@ -468,7 +535,10 @@ export default function GenericPropControls({ className = '' }: { className?: st
                     {/* Category Props */}
                     <AnimatePresence mode="sync">
                       {props.map((entry, index) => {
-                        const alreadySpawned = isAlreadySpawned(entry.id);
+                        const alreadySpawned = isSwapActive ? false : isAlreadySpawned(entry.id);
+                        const isCurrentDesk = isSwapActive && disabledDeskId === entry.id;
+                        const isDisabled = isCurrentDesk || alreadySpawned;
+                        const isHovered = hoveredItem?.entry.id === entry.id;
                         return (
                           <motion.button
                             layout
@@ -484,28 +554,40 @@ export default function GenericPropControls({ className = '' }: { className?: st
                               delay: index * 0.025
                             }}
                             type="button"
-                            disabled={alreadySpawned}
-                            className={`group w-full rounded-lg px-4 text-left text-xs flex items-center justify-between transition-all h-12
-                              ${alreadySpawned
-                                ? 'cursor-not-allowed'
-                                : 'hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-white/40'
-                              }`}
+                            disabled={isDisabled}
+                            className={`group relative w-full rounded-lg px-4 text-left text-xs flex items-center justify-between transition-all duration-150 h-12 border backdrop-blur-sm
+                              ${isDisabled
+                                ? 'cursor-not-allowed border-transparent opacity-60'
+                                : 'focus:outline-none focus:ring-2 focus:ring-white/50 hover:ring-1 hover:ring-white/40'
+                              }
+                              ${isHovered && !isDisabled ? 'ring-2 ring-white/70 shadow-lg scale-[1.02]' : ''}
+                            `}
                             style={{
-                              backgroundColor: category.bgColor
+                              backgroundColor: isDisabled
+                                ? category.bgColor
+                                : isHovered
+                                  ? lightenHex(category.bgColor, 0.22)
+                                  : category.bgColor,
+                              opacity: isDisabled ? 0.6 : 0.95
                             }}
-                            onClick={() => !alreadySpawned && handleSpawn(entry.id)}
+                            onClick={() => !isDisabled && handleSpawn(entry.id)}
                             onMouseEnter={(event) => handleEntryHoverStart(entry, event.currentTarget)}
                             onMouseLeave={handleEntryHoverEnd}
                             onFocus={(event) => handleEntryHoverStart(entry, event.currentTarget)}
                             onBlur={handleEntryHoverEnd}
                           >
-                        <span className={`tracking-wide ${alreadySpawned ? 'text-black/50' : 'text-black/90'}`}>
+                        <span className={`tracking-wide ${isDisabled ? 'text-black/50' : 'text-black/90'}`}>
                           {entry.label}
                         </span>
                         <div className="flex items-center gap-2">
-                          {alreadySpawned && (
+                          {alreadySpawned && !isSwapActive && (
                             <span className="inline-flex items-center rounded-full bg-green-500/30 px-2.5 py-1 text-[10px] font-medium text-green-200 uppercase tracking-wider">
                               In Scene
+                            </span>
+                          )}
+                          {isCurrentDesk && (
+                            <span className="inline-flex items-center rounded-full bg-blue-500/20 px-2.5 py-1 text-[10px] font-medium text-blue-100 uppercase tracking-wider">
+                              Active Desk
                             </span>
                           )}
                           {/* Category badges (max 3) - wrapped in dark chip */}

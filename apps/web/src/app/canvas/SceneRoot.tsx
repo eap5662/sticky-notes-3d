@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useCallback, useEffect, useRef, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
@@ -13,6 +13,7 @@ import { useAutoLayout } from "@/canvas/hooks/useAutoLayout";
 import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
 import { useUndoHistory } from "@/canvas/hooks/useUndoHistory";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
+import DeskSwapPreviewLayer from "@/canvas/DeskSwapPreviewLayer";
 import GenericPropControls from "@/canvas/GenericPropControls";
 import PropSelectionPanel from "@/canvas/PropSelectionPanel";
 import DeletePropButton from "@/canvas/DeletePropButton";
@@ -23,13 +24,14 @@ import GroundGrid from "@/canvas/GroundGrid";
 import { clearSelection } from "@/state/selectionStore";
 import { closeCatalog } from "@/state/catalogState";
 import { motion, AnimatePresence } from "framer-motion";
-import { undockProp, spawnGenericProp, setGenericPropPosition, type Vec3, type GenericProp } from "@/state/genericPropsStore";
+import { spawnGenericProp, setGenericPropPosition, dockPropWithOffset, dockPropWithAttachment, floatDockedProp, type Vec3, type GenericProp } from "@/state/genericPropsStore";
 import { PROP_CATALOG } from "@/data/propCatalog";
 import { useGenericProps } from "@/canvas/hooks/useGenericProps";
 import { useLayoutFrame } from "@/canvas/hooks/useLayoutFrame";
 import { useSelection } from "@/canvas/hooks/useSelection";
 import { useDelayedVisibility } from "@/canvas/hooks/useDelayedVisibility";
 import type { LayoutFrame } from "@/state/layoutFrameStore";
+import { useActiveDeskId, useActiveDeskProp } from "@/canvas/hooks/useDeskProp";
 
 const DESK_MOVE_STEP = 0.25;
 const DESK_MOVE_INTERVAL_MS = 200;
@@ -43,13 +45,11 @@ export default function SceneRoot() {
   const setMode = useCamera((s) => s.setMode);
 
   const genericProps = useGenericProps();
+  const activeDeskId = useActiveDeskId();
+  const deskProp = useActiveDeskProp();
   const layoutState = useAutoLayout();
   const layoutFrame = useLayoutFrame();
   const hasDesk = !!layoutState.frame;
-
-  const deskProp = useMemo(() => {
-    return genericProps.find(p => p.catalogId === 'desk-default') ?? null;
-  }, [genericProps]);
 
   const deskPropRef = useRef<GenericProp | null>(deskProp);
 
@@ -152,8 +152,7 @@ export default function SceneRoot() {
   useEffect(() => {
     if (hasSpawnedDeskRef.current) return;
 
-    const existingDesk = genericProps.find(p => p.catalogId === 'desk-default');
-    if (existingDesk) {
+    if (activeDeskId) {
       hasSpawnedDeskRef.current = true;
       return;
     }
@@ -170,18 +169,33 @@ export default function SceneRoot() {
       rotation: [0, 0, 0],
     });
     hasSpawnedDeskRef.current = true;
-  }, [genericProps]);
+  }, [genericProps, activeDeskId]);
 
-  // Auto-undock all props when desk is deleted
+  // Track desk lifecycle to float or reattach docked props
   const prevDeskIdRef = useRef<string | null>(null);
   useEffect(() => {
     const currentDeskId = deskProp?.id ?? null;
+    const prevDeskId = prevDeskIdRef.current;
 
-    // Desk was removed
-    if (prevDeskIdRef.current && !currentDeskId) {
+    if (prevDeskId && !currentDeskId) {
+      // Desk removed: mark attached props as floating
       genericProps.forEach(prop => {
-        if (prop.docked) {
-          undockProp(prop.id);
+        if (prop.id === currentDeskId) return;
+        if (prop.dockState === 'attached' || prop.docked) {
+          floatDockedProp(prop.id);
+        }
+      });
+    }
+
+    if (!prevDeskId && currentDeskId) {
+      // Desk added: auto-reattach floating props using stored offsets
+      genericProps.forEach(prop => {
+        if (prop.id === currentDeskId) return;
+        if (prop.dockState === 'floating' && prop.dockOffset) {
+          dockPropWithOffset(prop.id, prop.dockOffset);
+          if (prop.dockAttachment && prop.dockAttachment.deskInstanceId === currentDeskId) {
+            dockPropWithAttachment(prop.id, prop.dockAttachment);
+          }
         }
       });
     }
@@ -277,7 +291,7 @@ export default function SceneRoot() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setMode]);
 
-  const isLoading = layoutState.status === 'pending';
+  const isLoading = layoutState.status === 'pending' && !layoutState.frame;
 
   return (
     <div className="relative h-[70vh] min-h-[540px]">
@@ -345,6 +359,7 @@ export default function SceneRoot() {
           {/* Desk now rendered via GenericPropsLayer (auto-spawned on mount) */}
           <GroundGrid />
           <GenericPropsLayer />
+          <DeskSwapPreviewLayer />
           <Surfaces />
           <BoundsMarkingMode />
           <CameraRigController />

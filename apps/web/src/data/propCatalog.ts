@@ -205,4 +205,24 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
       },
     ],
   },
+
+  // Props with Interactive Surfaces (1) - 2025-10-24 Batch
+  {
+    id: 'modified-corner-desk',
+    label: 'Corner Desk',
+    url: '/models/modified-corner-desk.glb',
+    anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
+    defaultScale: 2.5, // Normalized to 1x in UI
+    primaryCategory: 'desk',
+    categories: ['desk', 'surface'],
+    surfaceType: 'board',
+    surfaces: [
+      {
+        id: createSurfaceId('modified-corner-desk-desk'),
+        kind: 'desk',
+        nodeName: 'desk-top-plane',
+        options: { normalSide: 'positive' },
+      },
+    ],
+  },
 ];

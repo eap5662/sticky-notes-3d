@@ -1,20 +1,36 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import * as THREE from "three";
 
 import { useSelection } from "@/canvas/hooks/useSelection";
 import { useGenericProp, useGenericProps } from "@/canvas/hooks/useGenericProps";
-import { rotateGenericProp, getGenericPropRotationDeg, dockPropWithOffset, undockProp, type Vec3 } from "@/state/genericPropsStore";
+import { PROP_CATALOG } from "@/data/propCatalog";
+import {
+  rotateGenericProp,
+  getGenericPropRotationDeg,
+  dockPropWithAttachment,
+  dockPropWithOffset,
+  undockProp,
+  setGenericPropStatus,
+  setGenericPropLocked,
+  type DockAttachment,
+} from "@/state/genericPropsStore";
 import { useLayoutFrameState } from "@/canvas/hooks/useLayoutFrame";
 import { useUndoHistoryStore } from "@/state/undoHistoryStore";
-import { useSurface, useSurfacesByKind } from "@/canvas/hooks/useSurfaces";
+import { useSurface, useSurfaceMeta, useSurfacesByKind } from "@/canvas/hooks/useSurfaces";
 import { getDeskBounds } from "@/state/deskBoundsStore";
 import { pointInPolygon } from "@/canvas/math/polygon";
 import { planeProject } from "@/canvas/math/plane";
+import { clampUVToShape, projectPointToSurface } from "@/canvas/math/surfaceFrame";
+import { beginDeskSwap, cancelDeskSwap, useDeskSwapStore, forceCompleteDeskSwap, type DeskSwapAttachmentPreviewStatus } from "@/state/deskSwapStore";
 
 const ROTATE_STEP_DEG = 5;
 const DEFAULT_HOLD_INTERVAL_MS = 500;
 const DESK_HOLD_INTERVAL_MS = 150;
+
+const DESK_CATALOG_IDS = new Set(
+  PROP_CATALOG.filter((entry) => entry.primaryCategory === "desk").map((entry) => entry.id)
+);
 
 type HoldButtonProps = {
   onActivate: () => void;
@@ -125,14 +141,49 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
     : (selection && selection.kind === 'generic' ? selection.id : null);
   const selectedGeneric = useGenericProp(selectedGenericId);
 
+  const swapActive = useDeskSwapStore((s) => s.active);
+  const swapTargetDeskId = useDeskSwapStore((s) => s.targetDeskId);
+  const previewEntry = useDeskSwapStore((s) => s.previewEntry);
+  const pendingReview = useDeskSwapStore((s) => s.pendingReview);
+  const previewAnalysis = useDeskSwapStore((s) => s.previewAnalysis);
+  const isSwapActiveForSelectedDesk = swapActive && swapTargetDeskId === (selectedGeneric?.id ?? null);
+
+  const previewCounts = useMemo(() => {
+    if (!previewAnalysis) return null;
+    const counts: Record<DeskSwapAttachmentPreviewStatus, number> = { ok: 0, clamped: 0, failed: 0 };
+    previewAnalysis.attachments.forEach((attachment) => {
+      counts[attachment.status] += 1;
+    });
+    return counts;
+  }, [previewAnalysis]);
+
+  const previewIssues = useMemo(() => {
+    if (!previewAnalysis) return [];
+    return previewAnalysis.attachments.filter((attachment) => attachment.status !== "ok");
+  }, [previewAnalysis]);
+
+  const reviewIssues = useMemo(() => {
+    if (!pendingReview) return [];
+    return pendingReview.attachments.filter((attachment) => attachment.status !== "ok");
+  }, [pendingReview]);
+
   // Find desk prop (now in generic props store)
   const genericProps = useGenericProps();
-  const deskProp = genericProps.find(p => p.catalogId === 'desk-default');
+  const deskSurfaces = useSurfacesByKind('desk');
+  const deskOwnerId = deskSurfaces[0]?.meta.ownerId ?? null;
+  const deskProp = useMemo(() => {
+    if (deskOwnerId) {
+      const byOwner = genericProps.find((prop) => prop.id === deskOwnerId);
+      if (byOwner) return byOwner;
+    }
+    return genericProps.find((prop) => prop.catalogId && DESK_CATALOG_IDS.has(prop.catalogId)) ?? null;
+  }, [genericProps, deskOwnerId]);
+  const resolvedDeskId = deskProp?.id ?? deskOwnerId ?? null;
 
   // Get desk surface for isOverDesk check
-  const deskSurfaces = useSurfacesByKind('desk');
   const deskSurfaceId = deskSurfaces[0]?.id;
   const deskSurface = useSurface(deskSurfaceId ?? '');
+  const deskSurfaceMeta = useSurfaceMeta(deskSurfaceId ?? '');
 
   // Check if selected prop is over desk
   const isOverDesk = (() => {
@@ -166,8 +217,16 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
     ? getGenericPropRotationDeg(rotationTarget.id)
     : 0;
 
+  const isDocked = selectedGeneric?.docked ?? false;
+  const isDesk = selectedGeneric
+    ? selectedGeneric.id === resolvedDeskId || (selectedGeneric.catalogId && DESK_CATALOG_IDS.has(selectedGeneric.catalogId))
+    : false;
+  const isDeskLocked = isDesk && (selectedGeneric?.locked ?? false);
+  const rotationDisabled = isDocked || isDeskLocked;
+
   const handleRotateLeft = useCallback(() => {
     if (!rotationTarget || !selectedGeneric) return;
+    if (rotationDisabled) return;
     const before = selectedGeneric.rotation;
     const after = rotateGenericProp(rotationTarget.id, -ROTATE_STEP_DEG);
     pushAction({
@@ -176,10 +235,11 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
       before,
       after,
     });
-  }, [rotationTarget, selectedGeneric, pushAction]);
+  }, [rotationTarget, selectedGeneric, pushAction, rotationDisabled]);
 
   const handleRotateRight = useCallback(() => {
     if (!rotationTarget || !selectedGeneric) return;
+    if (rotationDisabled) return;
     const before = selectedGeneric.rotation;
     const after = rotateGenericProp(rotationTarget.id, ROTATE_STEP_DEG);
     pushAction({
@@ -188,7 +248,7 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
       before,
       after,
     });
-  }, [rotationTarget, selectedGeneric, pushAction]);
+  }, [rotationTarget, selectedGeneric, pushAction, rotationDisabled]);
 
   const handleDock = useCallback(() => {
     if (!selectedGeneric || !layoutFrame.frame || !deskProp) return;
@@ -234,6 +294,53 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
 
     dockPropWithOffset(selectedGeneric.id, dockOffset);
 
+    let dockAttachment: DockAttachment | undefined;
+    if (deskSurfaceId) {
+      if (deskSurfaceMeta) {
+        const projection = projectPointToSurface(deskSurfaceMeta, pos);
+        if (projection) {
+          const clamped = clampUVToShape(deskSurfaceMeta, projection.u, projection.v);
+          dockAttachment = {
+            deskInstanceId: deskProp.id,
+            surfaceId: deskSurfaceId,
+            offsetUV: clamped,
+            lift: projection.lift,
+            yawRel: propDeskRelativeYaw,
+            surfaceSnapshot:
+              deskSurfaceMeta.shape && deskSurfaceMeta.shape.type === 'rect'
+                ? {
+                    type: 'rect',
+                    width: deskSurfaceMeta.shape.width,
+                    height: deskSurfaceMeta.shape.height,
+                  }
+                : undefined,
+          };
+        }
+      }
+
+      if (!dockAttachment) {
+        const width = frame.extents.u;
+        const depthSpan = frame.extents.v;
+        if (width > 0 && depthSpan > 0) {
+          const halfWidth = width / 2;
+          const halfDepth = depthSpan / 2;
+          const uvU = halfWidth > 1e-6 ? Math.max(0, Math.min(1, (lateral / halfWidth + 1) / 2)) : 0.5;
+          const uvV = halfDepth > 1e-6 ? Math.max(0, Math.min(1, (depth / halfDepth + 1) / 2)) : 0.5;
+          dockAttachment = {
+            deskInstanceId: deskProp.id,
+            surfaceId: deskSurfaceId,
+            offsetUV: { u: uvU, v: uvV },
+            lift,
+            yawRel: propDeskRelativeYaw,
+          };
+        }
+      }
+
+      if (dockAttachment) {
+        dockPropWithAttachment(selectedGeneric.id, dockAttachment);
+      }
+    }
+
     // Push undo action
     pushAction({
       type: 'dock',
@@ -243,14 +350,18 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
       beforePos,
       afterPos: pos,
       dockOffset,
+      dockAttachment: dockAttachment ?? selectedGeneric.dockAttachment,
+      beforeState: selectedGeneric.dockState,
+      afterState: 'attached',
     });
-  }, [selectedGeneric, layoutFrame.frame, deskProp, pushAction]);
+  }, [selectedGeneric, layoutFrame.frame, deskProp, deskSurfaceId, deskSurfaceMeta, pushAction]);
 
   const handleUndock = useCallback(() => {
     if (!selectedGeneric) return;
     const beforeDocked = selectedGeneric.docked;
     const beforePos = selectedGeneric.position;
     const dockOffset = selectedGeneric.dockOffset;
+    const dockAttachment = selectedGeneric.dockAttachment;
 
     undockProp(selectedGeneric.id);
 
@@ -263,8 +374,27 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
       beforePos,
       afterPos: beforePos, // Position doesn't change on undock
       dockOffset,
+      dockAttachment,
+      beforeState: selectedGeneric.dockState,
+      afterState: 'free',
     });
   }, [selectedGeneric, pushAction]);
+
+  const handleBeginSwap = useCallback(() => {
+    if (!selectedGeneric) return;
+    beginDeskSwap(selectedGeneric.id);
+  }, [selectedGeneric]);
+
+  const handleCancelSwapMode = useCallback(() => {
+    cancelDeskSwap();
+  }, []);
+
+  const handleToggleDeskLock = useCallback(() => {
+    if (!selectedGeneric) return;
+    const nextLocked = !(selectedGeneric.locked ?? false);
+    setGenericPropLocked(selectedGeneric.id, nextLocked);
+    setGenericPropStatus(selectedGeneric.id, 'placed');
+  }, [selectedGeneric]);
 
   const containerClass = ["pointer-events-none flex flex-col items-end gap-2", className]
     .filter(Boolean)
@@ -272,9 +402,7 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
 
   if (!rotationTarget) return null;
 
-  const isDocked = selectedGeneric?.docked ?? false;
-  const isDesk = selectedGeneric?.catalogId === 'desk-default';
-  const buttonClass = isDocked
+  const buttonClass = rotationDisabled
     ? "flex-1 rounded border border-white/30 px-2 py-1 opacity-40 cursor-not-allowed"
     : "flex-1 rounded border border-white/30 px-2 py-1 hover:bg-white/10";
 
@@ -288,14 +416,14 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
             <div className="mt-2 flex gap-2">
               <HoldButton
                 className={buttonClass}
-                onActivate={isDocked ? () => {} : handleRotateLeft}
+                onActivate={rotationDisabled ? () => {} : handleRotateLeft}
                 holdIntervalMs={DESK_HOLD_INTERVAL_MS}
               >
                 Rotate Left
               </HoldButton>
               <HoldButton
                 className={buttonClass}
-                onActivate={isDocked ? () => {} : handleRotateRight}
+                onActivate={rotationDisabled ? () => {} : handleRotateRight}
                 holdIntervalMs={DESK_HOLD_INTERVAL_MS}
               >
                 Rotate Right
@@ -309,44 +437,168 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
                   <span className="ml-2 text-teal-400">Undock to edit</span>
                 </>
               )}
+              {isDeskLocked && (
+                <>
+                  <span className="ml-2">(Locked)</span>
+                  <span className="ml-2 text-teal-400">Unlock to edit</span>
+                </>
+              )}
             </div>
           </div>
 
           {selectedGeneric && (
-            <div className="mt-3">
-              <div className="font-semibold">Desk Attachment</div>
-              <div className="mt-2">
-                {selectedGeneric.docked ? (
+            <>
+              {!isDesk ? (
+                <div className="mt-3">
+                  <div className="font-semibold">Desk Attachment</div>
+                  <div className="mt-2">
+                    {selectedGeneric.docked ? (
+                      <button
+                        type="button"
+                        className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
+                        onClick={handleUndock}
+                      >
+                        Undock from Desk
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className={`w-full rounded border px-2 py-1 text-xs ${
+                            isOverDesk
+                              ? 'border-white/30 hover:bg-white/10'
+                              : 'border-white/10 bg-white/5 text-white/40 cursor-not-allowed'
+                          }`}
+                          onClick={isOverDesk ? handleDock : undefined}
+                          disabled={!isOverDesk}
+                        >
+                          Dock to Desk
+                        </button>
+                        {!isOverDesk && (
+                          <div className="mt-1 text-[10px] text-yellow-400/80">
+                            Move prop over desk surface to dock
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3">
+                  <div className="font-semibold">Desk Controls</div>
+                  <div className="mt-2 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
+                      onClick={handleToggleDeskLock}
+                    >
+                      {selectedGeneric?.locked ? 'Unlock Desk' : 'Lock Desk'}
+                    </button>
+                    {isDeskLocked && (
+                      <div className="text-[11px] text-white/60">
+                        Locked desks cannot be moved or rotated.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {isDesk && (
+                <div className="mt-3">
                   <button
                     type="button"
                     className="w-full rounded border border-white/30 px-2 py-1 text-xs hover:bg-white/10"
-                    onClick={handleUndock}
+                    onClick={isSwapActiveForSelectedDesk ? handleCancelSwapMode : handleBeginSwap}
                   >
-                    {isDesk ? 'Unlock Desk' : 'Undock from Desk'}
+                    {isSwapActiveForSelectedDesk ? 'Cancel Desk Swap' : 'Replace Desk'}
                   </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      className={`w-full rounded border px-2 py-1 text-xs ${
-                        isOverDesk
-                          ? 'border-white/30 hover:bg-white/10'
-                          : 'border-white/10 bg-white/5 text-white/40 cursor-not-allowed'
-                      }`}
-                      onClick={isOverDesk ? handleDock : undefined}
-                      disabled={!isOverDesk}
-                    >
-                      {isDesk ? 'Lock Desk' : 'Dock to Desk'}
-                    </button>
-                    {!isOverDesk && !isDesk && (
-                      <div className="mt-1 text-[10px] text-yellow-400/80">
-                        Move prop over desk surface to dock
+                  {isSwapActiveForSelectedDesk && (
+                    <div className="mt-1 text-[11px] text-white/60">
+                      Catalog filtered to desks — choose a replacement to finish swapping.
+                    </div>
+                  )}
+                  {isSwapActiveForSelectedDesk && previewEntry && (
+                    <div className="mt-3 rounded-md border border-white/15 bg-white/[0.08] p-2 text-[11px] text-white">
+                      <div className="font-semibold text-white">
+                        Previewing: {previewEntry.label}
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
+                      {previewAnalysis ? (
+                        previewAnalysis.attachments.length === 0 ? (
+                          <div className="mt-1 text-white/60">No docked props need remapping.</div>
+                        ) : (
+                          <>
+                            {previewCounts && (
+                              <div className="mt-1 text-white/70">
+                                {previewCounts.ok} ok · {previewCounts.clamped} clamped · {previewCounts.failed} failed
+                              </div>
+                            )}
+                            {previewIssues.length > 0 && (
+                              <ul className="mt-2 space-y-1">
+                                {previewIssues.map((issue) => {
+                                  const tone = issue.status === "failed" ? "text-red-300" : "text-amber-200";
+                                  const fallback =
+                                    issue.status === "failed"
+                                      ? "Cannot remap to new desk"
+                                      : "Will clamp to desk bounds";
+                                  return (
+                                    <li key={issue.propId} className={tone}>
+                                      {issue.label} — {issue.reason ?? fallback}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </>
+                        )
+                      ) : (
+                        <div className="mt-1 text-white/60">Loading preview…</div>
+                      )}
+                    </div>
+                  )}
+                  {isSwapActiveForSelectedDesk && pendingReview && (
+                    <div className="mt-3 rounded-md border border-amber-400/40 bg-amber-500/10 p-2 text-[11px] text-white">
+                      <div className="font-semibold text-amber-200">Review Required</div>
+                      {reviewIssues.length > 0 ? (
+                        <ul className="mt-2 space-y-1">
+                          {reviewIssues.map((issue) => {
+                            const tone = issue.status === "failed" ? "text-red-200" : "text-yellow-100";
+                            const fallback =
+                              issue.status === "failed"
+                                ? "Cannot remap to new desk"
+                                : "Will clamp to desk bounds";
+                            return (
+                              <li key={`pending-${issue.propId}`} className={tone}>
+                                {issue.label} — {issue.reason ?? fallback}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <div className="mt-1 text-white/70">No issues detected, you can proceed.</div>
+                      )}
+                      <div className="mt-3 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          className="w-full rounded border border-amber-300/60 bg-amber-400/20 px-2 py-1 text-xs font-semibold text-amber-100 hover:bg-amber-300/30"
+                          onClick={() => {
+                            forceCompleteDeskSwap(pendingReview.entry);
+                          }}
+                        >
+                          Force Swap Anyway
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full rounded border border-white/20 px-2 py-1 text-xs text-white/80 hover:bg-white/10"
+                          onClick={handleCancelSwapMode}
+                        >
+                          Cancel Swap
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
     </div>

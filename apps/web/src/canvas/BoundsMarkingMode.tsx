@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useThree } from '@react-three/fiber';
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
+import { useActiveDeskId } from '@/canvas/hooks/useDeskProp';
 import { useSurface, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { planeProject } from '@/canvas/math/plane';
 import { setDeskBounds, setMarkingMode, type Vec2 } from '@/state/deskBoundsStore';
@@ -18,9 +19,10 @@ export default function BoundsMarkingMode() {
   const selection = useSelection();
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
   const selectedProp = useGenericProp(selectedGenericId);
+  const activeDeskId = useActiveDeskId();
 
   // Only activate for desk props
-  const isDesk = selectedProp?.catalogId === 'desk-default';
+  const isDesk = selectedProp?.id === activeDeskId;
 
   const deskSurfaces = useSurfacesByKind('desk');
   const deskSurfaceId = deskSurfaces[0]?.id;

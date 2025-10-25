@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 🚨 RECENT MAJOR CHANGES (January 2025)
+## 🚨 RECENT MAJOR CHANGES (September 2025)
 
 **Migration to Generic Props System - IN PROGRESS**
 
@@ -31,6 +31,22 @@ The codebase recently underwent a major refactor migrating from hardcoded desk/m
 - Docked props cannot be edited (greyed out controls)
 
 **Read SPRINT_SUMMARY.md before making changes to prop system!**
+
+---
+
+## 🔄 Desk Swap Preview & Active Desk Detection (October 2025)
+
+- Swap mode renders a ghost desk and attachment status rings via `DeskSwapPreviewLayer.tsx`. `deskSwapStore.complete()` now attempts to recompute attachments against the new desk, but mapping remains **experimental**—props may end up at incorrect heights or positions and sometimes drop below the surface. Treat current remapping as a best-effort heuristic, not production-ready logic.
+- `useDeskProp.ts` exposes `useActiveDeskId()` / `useActiveDeskProp()`. All desk-specific logic (layout frame, controls, drag hints, bounds marking, delete guard) should consume those helpers rather than checking `catalogId === 'desk-default'`.
+- While swap mode is active the catalog auto-opens, filters to desk entries, and greys out the currently active desk so you can’t re-select it. Look at `GenericPropControls.tsx` for the gating logic.
+- Layout controls now show a dedicated “Desk Controls” block for the selected desk (lock + replace). Non-desk props still show the docking UI.
+- The layout loading banner only appears while no frame has been resolved; swapping desks no longer leaves “Loading workspace…” stuck on screen.
+- **Known limitations (Nov 2025):**
+  - Ghost preview/summary cards only render while the desk remains selected. If selection clears, the UI feedback disappears even though swap mode is still active.
+  - Reprojection logic does not reliably keep undocked props on the new desk; they may float or clip. Docked props can slip beneath the surface when surface metadata is sparse.
+  - Until the remap solver matures, expect to fine-tune placement manually after swap or abort the swap entirely.
+
+When extending the swap flow, make sure to update both the preview analysis (`deskSwapStore.setPreviewSurfaces`) and the summary panel so the gating logic stays in sync.
 
 ---
 

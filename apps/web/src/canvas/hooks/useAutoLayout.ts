@@ -6,6 +6,7 @@ import { cameraViews } from "@/camera/cameraViews";
 import type { SurfaceMeta } from "@/state/surfaceMetaStore";
 import type { GenericPropBounds } from "@/state/genericPropsStore";
 import { useSurfaceMeta, useSurfacesByKind } from "./useSurfaces";
+import { useActiveDeskId } from "./useDeskProp";
 import {
   setLayoutState,
   type LayoutFrame,
@@ -76,8 +77,8 @@ function buildLayoutFrame(
   bounds: GenericPropBounds,
   deskRotationY: number
 ): LayoutFrame {
-  let up = toVec3(meta.normal).normalize();
-  let right = toVec3(meta.uDir).normalize();
+  const up = toVec3(meta.normal).normalize();
+  const right = toVec3(meta.uDir).normalize();
 
   // Apply desk Y-rotation to surface axes (surface meta is in local space)
   if (deskRotationY !== 0) {
@@ -209,11 +210,12 @@ function posesApproximatelyEqual(a: LayoutPose, b: LayoutPose, eps = 1e-3) {
 
 export function useAutoLayout() {
   const genericProps = useGenericProps();
+  const activeDeskId = useActiveDeskId();
 
-  // Find desk by querying generic props for desk catalog ID
   const deskProp = useMemo(() => {
-    return genericProps.find(p => p.catalogId === 'desk-default');
-  }, [genericProps]);
+    if (!activeDeskId) return null;
+    return genericProps.find((p) => p.id === activeDeskId) ?? null;
+  }, [genericProps, activeDeskId]);
 
   // Extract desk rotation Y-axis (yaw) to trigger effect when desk rotates
   // Use primitive value to avoid reference thrashing
