@@ -16,8 +16,8 @@ const COLORS = [
 ];
 
 // Configuration for vertex markers
-const SHOW_VERTEX_MARKERS = false; // Toggle to enable/disable vertex visualization
-const VERTEX_DECIMATION = 10; // Only show every Nth vertex (1 = all, 10 = every 10th)
+const SHOW_VERTEX_MARKERS = true; // Toggle to enable/disable vertex visualization
+const VERTEX_DECIMATION = 1; // Only show every Nth vertex (1 = all, 10 = every 10th)
 
 type BoundsMarkerProps = {
   meta: SurfaceMeta;
@@ -31,7 +31,7 @@ function computeAnchor(gltf: { scene: THREE.Object3D }, config?: AnchorConfig): 
   if (config.type === 'vector') return new THREE.Vector3(...config.value);
 
   // Compute bbox anchor
-  gltf.scene.updateMatrixWorld(true, true);
+  gltf.scene.updateMatrixWorld(true);
   const bounds = new THREE.Box3().setFromObject(gltf.scene);
   if (bounds.isEmpty()) return new THREE.Vector3(0, 0, 0);
 
