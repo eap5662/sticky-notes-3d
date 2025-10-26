@@ -210,7 +210,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
   {
     id: 'modified-corner-desk',
     label: 'Modified Corner Desk',
-    url: '/models/modified-corner-desk.glb',
+    url: '/models/modified-corner-desk.glb?v=20251025',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     defaultScale: 2.5, // Normalized to 1x in UI
     primaryCategory: 'desk',
@@ -248,7 +248,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
   {
     id: 'tan-desk',
     label: 'Tan Desk',
-    url: '/models/Tan-Desk.glb',
+    url: '/models/Tan-Desk.glb?v=20251025',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     defaultScale: 1.75, // Normalized to 1x in UI
     primaryCategory: 'desk',

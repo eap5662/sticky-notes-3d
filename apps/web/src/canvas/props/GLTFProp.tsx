@@ -108,6 +108,12 @@ export default function GLTFProp({
     [anchorTuple],
   );
 
+  const propTransform = React.useMemo(() => ({
+    position: position as [number, number, number] | undefined,
+    rotation: rotation as [number, number, number] | undefined,
+    anchor: anchorVector ?? undefined,
+  }), [position, rotation, anchorVector]);
+
   const nodes = React.useMemo(() => {
     const map: Record<string, THREE.Object3D> = {};
     scene.traverse((o) => (map[o.name] = o));
@@ -141,7 +147,7 @@ export default function GLTFProp({
           return null;
         }
         try {
-          const result = extractSurfaceFromNode(node, id, kind, options);
+          const result = extractSurfaceFromNode(node, id, kind, options, scale, propTransform);
           const { surface } = result;
           registerSurface(surface);
           onExtract?.(result);
@@ -164,7 +170,7 @@ export default function GLTFProp({
         clearSurfaceMeta(id);
       });
     };
-  }, [scene, nodes, registerSurfaces, url, onLoaded, transformKey]);
+  }, [scene, nodes, registerSurfaces, url, onLoaded, transformKey, propTransform]);
 
   React.useEffect(() => {
     const group = groupRef.current;

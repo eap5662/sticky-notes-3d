@@ -14,6 +14,7 @@ import { useDockConstraints } from "@/canvas/hooks/useDockConstraints";
 import { useUndoHistory } from "@/canvas/hooks/useUndoHistory";
 import GenericPropsLayer from "@/canvas/GenericPropsLayer";
 import DeskSwapPreviewLayer from "@/canvas/DeskSwapPreviewLayer";
+import DeskSurfaceBoundsMarkers from "@/canvas/DeskSurfaceBoundsMarkers";
 import GenericPropControls from "@/canvas/GenericPropControls";
 import PropSelectionPanel from "@/canvas/PropSelectionPanel";
 import DeletePropButton from "@/canvas/DeletePropButton";
@@ -360,6 +361,7 @@ export default function SceneRoot() {
           <GroundGrid />
           <GenericPropsLayer />
           <DeskSwapPreviewLayer />
+          <DeskSurfaceBoundsMarkers />
           <Surfaces />
           <BoundsMarkingMode />
           <CameraRigController />

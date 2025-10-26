@@ -13,6 +13,12 @@ export type SurfaceExtractOptions = {
   normalSide?: 'positive' | 'negative' | 'center';
 };
 
+export type PropTransform = {
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  anchor?: THREE.Vector3;
+};
+
 export type SurfaceDebugInfo = {
   center: THREE.Vector3;
   extents: { u: number; v: number; thickness: number };
@@ -45,6 +51,42 @@ function computeLocalBounds(node: THREE.Object3D) {
   const box = new THREE.Box3();
   box.makeEmpty();
 
+  // First, check if the node itself is a mesh with geometry
+  // This prevents including child meshes (like desk drawers/legs) in surface bounds
+  const nodeMesh = node as THREE.Mesh<THREE.BufferGeometry>;
+  if (nodeMesh.isMesh && nodeMesh.geometry) {
+    const geometry = nodeMesh.geometry;
+
+    // Compute bounds from actual vertex positions for accuracy
+    const position = geometry.attributes.position;
+    if (position) {
+      const vertex = new THREE.Vector3();
+      for (let i = 0; i < position.count; i++) {
+        vertex.fromBufferAttribute(position, i);
+        box.expandByPoint(vertex);
+      }
+
+      if (!box.isEmpty()) {
+        console.log(`[surfaceAdapter] Node "${node.name}" bounds from vertices:`, {
+          min: box.min.toArray(),
+          max: box.max.toArray(),
+          size: [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z],
+          vertexCount: position.count
+        });
+        return box;
+      }
+    }
+
+    // Fallback to bounding box if no position attribute
+    ensureBoundingBox(nodeMesh);
+    if (nodeMesh.geometry.boundingBox) {
+      console.log(`[surfaceAdapter] Node "${node.name}" using geometry.boundingBox (no vertices)`);
+      return nodeMesh.geometry.boundingBox.clone();
+    }
+  }
+
+  // Fallback: traverse children if node itself has no mesh geometry
+  console.log(`[surfaceAdapter] Node "${node.name}" is not a mesh, traversing children...`);
   const invNodeWorld = new THREE.Matrix4().copy(node.matrixWorld).invert();
   const rel = new THREE.Matrix4();
   const corner = new THREE.Vector3();
@@ -72,6 +114,12 @@ function computeLocalBounds(node: THREE.Object3D) {
   if (box.isEmpty()) {
     throw new Error('surfaceFromNode: node has no geometry to derive bounds from');
   }
+
+  console.log(`[surfaceAdapter] Node "${node.name}" bounds from children:`, {
+    min: box.min.toArray(),
+    max: box.max.toArray(),
+    size: [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z]
+  });
 
   return box;
 }
@@ -103,8 +151,16 @@ export function extractSurfaceFromNode(
   id: Surface['id'],
   kind: Surface['kind'],
   opts: SurfaceExtractOptions = {},
+  propScale?: number | [number, number, number],
+  propTransform?: PropTransform,
 ): SurfaceExtractResult {
   const { normalSide = 'positive' } = opts;
+
+  // Parse scale into components
+  const scaleX = Array.isArray(propScale) ? propScale[0] : (propScale ?? 1);
+  const scaleY = Array.isArray(propScale) ? propScale[1] : (propScale ?? 1);
+  const scaleZ = Array.isArray(propScale) ? propScale[2] : (propScale ?? 1);
+  const scaleVec = new THREE.Vector3(scaleX, scaleY, scaleZ);
 
   node.updateWorldMatrix(true, true);
 
@@ -152,17 +208,24 @@ export function extractSurfaceFromNode(
     localOrigin.setComponent(AXIS_INDICES[thicknessKey.axis], boundsLocal.max[thicknessKey.axis]);
   }
 
+  // Get positions in GLTF-local space (these stay in GLTF space, not world space!)
   const originWorld = localOrigin.clone().applyMatrix4(node.matrixWorld);
-
-  const uAxis = uDir.clone().setLength(uLength);
-  const vAxis = vDir.clone().setLength(vLength);
-
   const centerLocal = new THREE.Vector3(
     boundsLocal.min.x + extents.x / 2,
     boundsLocal.min.y + extents.y / 2,
     boundsLocal.min.z + extents.z / 2,
   );
   const centerWorld = centerLocal.clone().applyMatrix4(node.matrixWorld);
+
+  // Apply uniform scale to dimensions ONLY
+  const uniformScale = (scaleX + scaleY + scaleZ) / 3;
+  const uAxis = uDir.clone().setLength(uLength * uniformScale);
+  const vAxis = vDir.clone().setLength(vLength * uniformScale);
+
+  // NOTE: We do NOT apply propTransform to positions!
+  // The positions are in GLTF-local space, and the React component's transform hierarchy
+  // (in GLTFProp) will handle positioning/scaling/rotation when rendering.
+  // We ONLY scale the surface dimensions (uAxis, vAxis) so they match the visual size.
 
   const surface: Surface = {
     id,
@@ -175,7 +238,7 @@ export function extractSurfaceFromNode(
 
   const debug: SurfaceDebugInfo = {
     center: centerWorld,
-    extents: { u: uLength, v: vLength, thickness },
+    extents: { u: uLength * uniformScale, v: vLength * uniformScale, thickness: thickness * uniformScale },
     normal: normalDir,
     uDir,
     vDir,

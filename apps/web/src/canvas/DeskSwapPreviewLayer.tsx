@@ -80,6 +80,12 @@ function GhostGLTF({ entry, position, rotation, scale }: GhostGLTFProps) {
     [anchorTuple],
   );
 
+  const propTransform = useMemo(() => ({
+    position: position as [number, number, number] | undefined,
+    rotation: rotation as [number, number, number] | undefined,
+    anchor,
+  }), [position, rotation, anchor]);
+
   useEffect(() => {
     const materials: THREE.Material[] = [];
     sceneClone.traverse((obj) => {
@@ -143,7 +149,7 @@ function GhostGLTF({ entry, position, rotation, scale }: GhostGLTFProps) {
         return { baseSurfaceId, meta: null };
       }
       try {
-        const { surface, debug } = extractSurfaceFromNode(node, surfaceConfig.id, surfaceConfig.kind, surfaceConfig.options);
+        const { surface, debug } = extractSurfaceFromNode(node, surfaceConfig.id, surfaceConfig.kind, surfaceConfig.options, scale, propTransform);
         return {
           baseSurfaceId,
           meta: {
@@ -203,7 +209,7 @@ function GhostGLTF({ entry, position, rotation, scale }: GhostGLTFProps) {
     }
     surfaceHashRef.current = nextHash;
     setDeskSwapPreviewSurfaces(entry.id, previewSurfaces);
-  }, [entry, sceneClone]);
+  }, [entry, sceneClone, scale, propTransform]);
 
   const appliedScale = useMemo(() => {
     if (!scale) return [1, 1, 1] as Vec3;
