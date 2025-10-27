@@ -250,7 +250,7 @@ function computeHighlight(prop: GenericProp) {
 
 const STATUS_COLORS: Record<DeskSwapAttachmentPreviewStatus | 'pending', string> = {
   ok: '#2dd4bf',
-  clamped: '#fbbf24',
+  clamped: '#f87171',
   failed: '#f87171',
   pending: '#93c5fd',
 };

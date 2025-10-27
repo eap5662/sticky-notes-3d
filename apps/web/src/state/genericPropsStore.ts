@@ -20,11 +20,18 @@ export type DockOffset = {
 
 export type DockState = 'free' | 'attached' | 'floating' | 'pending';
 
+export type CanonicalSnapshotPlain = {
+  sampleCount: number;
+  samples: Vec2[];
+  weights: number[];
+};
+
 export type SurfaceSnapshot =
   | {
       type: 'rect';
       width: number;
       height: number;
+      canonical?: CanonicalSnapshotPlain;
     }
   | {
       type: 'polygon';
@@ -35,6 +42,7 @@ export type SurfaceSnapshot =
         up: Vec2;
         extents: Vec2;
       };
+      canonical?: CanonicalSnapshotPlain;
     };
 
 export type DockAttachment = {
@@ -97,7 +105,16 @@ function cloneDockAttachmentInternal(attachment: DockAttachment): DockAttachment
     offsetUV: { ...attachment.offsetUV },
     surfaceSnapshot: attachment.surfaceSnapshot
       ? attachment.surfaceSnapshot.type === 'rect'
-        ? { ...attachment.surfaceSnapshot }
+        ? {
+            ...attachment.surfaceSnapshot,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
+          }
         : {
             ...attachment.surfaceSnapshot,
             points: attachment.surfaceSnapshot.points.map(([x, y]) => [x, y] as [number, number]),
@@ -107,6 +124,13 @@ function cloneDockAttachmentInternal(attachment: DockAttachment): DockAttachment
                   right: [...attachment.surfaceSnapshot.obb.right] as [number, number],
                   up: [...attachment.surfaceSnapshot.obb.up] as [number, number],
                   extents: [...attachment.surfaceSnapshot.obb.extents] as [number, number],
+                }
+              : undefined,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
                 }
               : undefined,
           }

@@ -25,7 +25,16 @@ function cloneAttachment(attachment: DockAttachment | undefined) {
     offsetUV: { ...attachment.offsetUV },
     surfaceSnapshot: attachment.surfaceSnapshot
       ? attachment.surfaceSnapshot.type === 'rect'
-        ? { ...attachment.surfaceSnapshot }
+        ? {
+            ...attachment.surfaceSnapshot,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
+          }
         : {
             ...attachment.surfaceSnapshot,
             points: attachment.surfaceSnapshot.points.map(([x, y]) => [x, y] as [number, number]),
@@ -35,6 +44,13 @@ function cloneAttachment(attachment: DockAttachment | undefined) {
                   right: [...attachment.surfaceSnapshot.obb.right] as [number, number],
                   up: [...attachment.surfaceSnapshot.obb.up] as [number, number],
                   extents: [...attachment.surfaceSnapshot.obb.extents] as [number, number],
+                }
+              : undefined,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
                 }
               : undefined,
           }

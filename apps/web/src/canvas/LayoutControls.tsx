@@ -22,7 +22,9 @@ import { getDeskBounds } from "@/state/deskBoundsStore";
 import { pointInPolygon } from "@/canvas/math/polygon";
 import { planeProject } from "@/canvas/math/plane";
 import { clampUVToShape, projectPointToSurface } from "@/canvas/math/surfaceFrame";
+import { encodeCanonical } from "@/canvas/math/canonicalCoordinates";
 import { beginDeskSwap, cancelDeskSwap, useDeskSwapStore, forceCompleteDeskSwap, type DeskSwapAttachmentPreviewStatus } from "@/state/deskSwapStore";
+import DeskSwapReviewBanner from "@/canvas/DeskSwapReviewBanner";
 
 const ROTATE_STEP_DEG = 5;
 const DEFAULT_HOLD_INTERVAL_MS = 500;
@@ -296,7 +298,17 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
 
     let dockAttachment: DockAttachment | undefined;
     if (deskSurfaceId) {
+      let canonicalSnapshot: { sampleCount: number; samples: [number, number][]; weights: number[] } | undefined;
       if (deskSurfaceMeta) {
+        const canonical = encodeCanonical(deskSurfaceMeta, pos, propDeskRelativeYaw);
+        if (canonical) {
+          canonicalSnapshot = {
+            sampleCount: canonical.snapshot.sampleCount,
+            samples: canonical.snapshot.samples.map(([x, y]) => [x, y] as [number, number]),
+            weights: Array.from(canonical.snapshot.weights),
+          };
+        }
+
         const projection = projectPointToSurface(deskSurfaceMeta, pos);
         if (projection) {
           const clamped = clampUVToShape(deskSurfaceMeta, projection.u, projection.v);
@@ -312,11 +324,13 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
                     type: 'rect',
                     width: deskSurfaceMeta.shape.width,
                     height: deskSurfaceMeta.shape.height,
+                    canonical: canonicalSnapshot,
                   }
                 : deskSurfaceMeta.shape && deskSurfaceMeta.shape.type === 'polygon'
                   ? {
                       type: 'polygon',
                       points: deskSurfaceMeta.shape.points.map(([x, y]) => [x, y] as [number, number]),
+                      canonical: canonicalSnapshot,
                     }
                   : undefined,
           };
@@ -338,6 +352,24 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
             lift,
             yawRel: propDeskRelativeYaw,
           };
+          if (canonicalSnapshot) {
+            if (deskSurfaceMeta?.shape?.type === 'polygon') {
+              dockAttachment.surfaceSnapshot = {
+                type: 'polygon',
+                points: deskSurfaceMeta.shape.points.map(([x, y]) => [x, y] as [number, number]),
+                canonical: canonicalSnapshot,
+              };
+            } else {
+              const width = deskSurfaceMeta?.shape?.type === 'rect' ? deskSurfaceMeta.shape.width : frame.extents.u;
+              const height = deskSurfaceMeta?.shape?.type === 'rect' ? deskSurfaceMeta.shape.height : frame.extents.v;
+              dockAttachment.surfaceSnapshot = {
+                type: 'rect',
+                width,
+                height,
+                canonical: canonicalSnapshot,
+              };
+            }
+          }
         }
       }
 
@@ -405,15 +437,19 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
     .filter(Boolean)
     .join(" ");
 
-  if (!rotationTarget) return null;
+  if (!rotationTarget) {
+    return <DeskSwapReviewBanner />;
+  }
 
   const buttonClass = rotationDisabled
     ? "flex-1 rounded border border-white/30 px-2 py-1 opacity-40 cursor-not-allowed"
     : "flex-1 rounded border border-white/30 px-2 py-1 hover:bg-white/10";
 
   return (
-    <div className={containerClass}>
-      <div className="pointer-events-auto w-64 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
+    <>
+      <DeskSwapReviewBanner />
+      <div className={containerClass}>
+        <div className="pointer-events-auto w-64 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
           <div>
             <div className="font-semibold">
               {rotationTarget.label} Rotation
@@ -606,6 +642,7 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
             </>
           )}
         </div>
-    </div>
+      </div>
+    </>
   );
 }

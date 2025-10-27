@@ -22,7 +22,8 @@ import {
 import { createSnapshotFromProp, useUndoHistoryStore, type DeskSwapAttachmentSnapshot } from '@/state/undoHistoryStore';
 import { setSelection } from '@/state/selectionStore';
 import type { SurfaceMeta } from '@/state/surfaceMetaStore';
-import { clampUVToShape, projectPointToSurface } from '@/canvas/math/surfaceFrame';
+import { clampUVToShape, projectPointToSurface, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
+import { decodeCanonical, encodeCanonical, type CanonicalSnapshot } from '@/canvas/math/canonicalCoordinates';
 import { createSurfaceId } from '@/canvas/surfaces';
 
 export type DeskSwapAttachmentPreviewStatus = 'ok' | 'clamped' | 'failed';
@@ -73,6 +74,7 @@ type AttachmentPlanSurface = {
   lift: number;
   yawRel: number;
   clampApplied: boolean;
+  canonicalSampleCount?: number;
 };
 
 type AttachmentPlanOffset = {
@@ -90,7 +92,16 @@ function cloneAttachment(attachment: DockAttachment | undefined): DockAttachment
     offsetUV: { ...attachment.offsetUV },
     surfaceSnapshot: attachment.surfaceSnapshot
       ? attachment.surfaceSnapshot.type === 'rect'
-        ? { ...attachment.surfaceSnapshot }
+        ? {
+            ...attachment.surfaceSnapshot,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
+          }
         : {
             ...attachment.surfaceSnapshot,
             points: attachment.surfaceSnapshot.points.map(([x, y]) => [x, y] as [number, number]),
@@ -102,6 +113,13 @@ function cloneAttachment(attachment: DockAttachment | undefined): DockAttachment
                   extents: [...attachment.surfaceSnapshot.obb.extents] as [number, number],
                 }
               : undefined,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
           }
       : undefined,
   };
@@ -110,6 +128,17 @@ function cloneAttachment(attachment: DockAttachment | undefined): DockAttachment
 function cloneOffset(offset: DockOffset | undefined): DockOffset | undefined {
   if (!offset) return undefined;
   return { ...offset };
+}
+
+function convertToCanonicalSnapshot(
+  snapshot: { sampleCount: number; samples: Array<[number, number]>; weights: number[] } | undefined,
+): CanonicalSnapshot | null {
+  if (!snapshot) return null;
+  return {
+    sampleCount: snapshot.sampleCount,
+    samples: snapshot.samples.map(([x, y]) => [x, y] as [number, number]),
+    weights: Float32Array.from(snapshot.weights),
+  };
 }
 
 function getBaseSurfaceId(surfaceId: string | undefined): string | null {
@@ -142,6 +171,7 @@ function createSurfacePlan(
   uv: { u: number; v: number },
   lift: number,
   yawRel: number,
+  options?: { canonicalSampleCount?: number },
 ): AttachmentPlanSurface {
   const clamped = clampUVToShape(meta, uv.u, uv.v);
   const delta = Math.abs(clamped.u - uv.u) + Math.abs(clamped.v - uv.v);
@@ -152,6 +182,7 @@ function createSurfacePlan(
     lift,
     yawRel,
     clampApplied: delta > CLAMP_EPSILON,
+    canonicalSampleCount: options?.canonicalSampleCount,
   };
 }
 
@@ -180,6 +211,36 @@ function planAttachmentForProp(
     if (baseSurfaceId) {
       const meta = surfaceMap[baseSurfaceId] ?? null;
       if (meta) {
+        const canonicalSnapshot = convertToCanonicalSnapshot(attachment.surfaceSnapshot?.canonical);
+        if (canonicalSnapshot) {
+          const decoded = decodeCanonical(meta, canonicalSnapshot, attachment.lift, yawRel);
+
+          if (decoded) {
+            const plan = createSurfacePlan(baseSurfaceId, meta, decoded.uv, decoded.lift, yawRel, {
+              canonicalSampleCount: canonicalSnapshot.sampleCount,
+            });
+            return {
+              plan,
+              status: plan.clampApplied ? 'clamped' : 'ok',
+              reason: plan.clampApplied ? 'Attachment adjusted to fit new desk bounds' : undefined,
+              notice: plan.clampApplied ? 'repositioned' : undefined,
+            };
+          }
+        }
+
+        const encoded = encodeCanonical(meta, propPosition, yawRel);
+        if (encoded) {
+          const plan = createSurfacePlan(baseSurfaceId, meta, encoded.uv, encoded.lift, yawRel, {
+            canonicalSampleCount: encoded.snapshot.sampleCount,
+          });
+          return {
+            plan,
+            status: plan.clampApplied ? 'clamped' : 'ok',
+            reason: plan.clampApplied ? 'Attachment adjusted to fit new desk bounds' : undefined,
+            notice: plan.clampApplied ? 'repositioned' : undefined,
+          };
+        }
+
         const projected = projectPointToSurface(meta, propPosition);
         const uv = projected ? { u: projected.u, v: projected.v } : attachment.offsetUV;
         const lift = projected ? projected.lift : attachment.lift;
@@ -251,17 +312,36 @@ function realizeAttachmentPlan(
     const meta = surfaceMap[plan.baseSurfaceId] ?? null;
     const surfaceId = createSurfaceId(`${newDeskId}:${plan.baseSurfaceId}`);
     let surfaceSnapshot;
-    if (meta?.shape?.type === 'rect') {
-      surfaceSnapshot = {
-        type: 'rect' as const,
-        width: meta.shape.width,
-        height: meta.shape.height,
-      };
-    } else if (meta?.shape?.type === 'polygon') {
-      surfaceSnapshot = {
-        type: 'polygon' as const,
-        points: meta.shape.points.map(([x, y]) => [x, y] as [number, number]),
-      };
+    if (meta?.shape) {
+      let canonicalSnapshot;
+      const candidatePoint = unprojectFromSurface(meta, plan.offsetUV.u, plan.offsetUV.v, plan.lift);
+      if (candidatePoint) {
+        const canonical = encodeCanonical(meta, candidatePoint, plan.yawRel, {
+          sampleCount: plan.canonicalSampleCount,
+        });
+        if (canonical) {
+          canonicalSnapshot = {
+            sampleCount: canonical.snapshot.sampleCount,
+            samples: canonical.snapshot.samples.map(([x, y]) => [x, y] as [number, number]),
+            weights: Array.from(canonical.snapshot.weights),
+          };
+        }
+      }
+
+      if (meta.shape.type === 'rect') {
+        surfaceSnapshot = {
+          type: 'rect' as const,
+          width: meta.shape.width,
+          height: meta.shape.height,
+          canonical: canonicalSnapshot,
+        };
+      } else if (meta.shape.type === 'polygon') {
+        surfaceSnapshot = {
+          type: 'polygon' as const,
+          points: meta.shape.points.map(([x, y]) => [x, y] as [number, number]),
+          canonical: canonicalSnapshot,
+        };
+      }
     }
     const attachment: DockAttachment = {
       deskInstanceId: newDeskId,
@@ -434,6 +514,7 @@ export const useDeskSwapStore = create<DeskSwapState>((set, get) => ({
 
     const failedAttachments = attachments.filter((attachment) => attachment.status === 'failed');
     if (!options?.force && failedAttachments.length > 0) {
+      setSelection(null);
       set({ pendingReview: { entry, attachments } });
       return false;
     }

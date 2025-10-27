@@ -1,6 +1,7 @@
 import { SurfaceId } from '@/canvas/surfaces';
 import type { Vec3 } from '@/canvas/surfaces';
 import type { SurfaceKind } from '@/data/propCatalog';
+import { clearCanonicalSampler } from '@/canvas/math/canonicalSampler';
 
 export type RectShape = {
   type: 'rect';
@@ -88,6 +89,9 @@ function metaEquals(a: SurfaceMeta | undefined, b: SurfaceMeta) {
 
 export function setSurfaceMeta(id: SurfaceId, meta: SurfaceMeta) {
   const existing = metaRegistry.get(id);
+  if (existing) {
+    clearCanonicalSampler(existing);
+  }
   metaRegistry.set(id, meta);
   if (!metaEquals(existing, meta)) {
     notify();
@@ -95,7 +99,10 @@ export function setSurfaceMeta(id: SurfaceId, meta: SurfaceMeta) {
 }
 
 export function clearSurfaceMeta(id: SurfaceId) {
-  if (metaRegistry.delete(id)) {
+  const existing = metaRegistry.get(id);
+  if (existing) {
+    clearCanonicalSampler(existing);
+    metaRegistry.delete(id);
     notify();
   }
 }

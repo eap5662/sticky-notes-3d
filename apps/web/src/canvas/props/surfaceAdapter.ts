@@ -165,7 +165,7 @@ export function extractSurfaceFromNode(
   kind: Surface['kind'],
   opts: SurfaceExtractOptions = {},
   propScale?: number | [number, number, number],
-  propTransform?: PropTransform,
+  _propTransform?: PropTransform,
 ): SurfaceExtractResult {
   const { normalSide = 'positive' } = opts;
 
@@ -173,7 +173,7 @@ export function extractSurfaceFromNode(
   const scaleX = Array.isArray(propScale) ? propScale[0] : (propScale ?? 1);
   const scaleY = Array.isArray(propScale) ? propScale[1] : (propScale ?? 1);
   const scaleZ = Array.isArray(propScale) ? propScale[2] : (propScale ?? 1);
-  const scaleVec = new THREE.Vector3(scaleX, scaleY, scaleZ);
+  void _propTransform;
 
   node.updateWorldMatrix(true, true);
 
@@ -189,7 +189,7 @@ export function extractSurfaceFromNode(
   const axisDirs: Record<AxisKey, THREE.Vector3> = { x: xDir, y: yDir, z: zDir };
 
   const uDir = axisDirs[uAxisKey.axis].clone();
-  let vDir = axisDirs[vAxisKey.axis].clone();
+  const vDir = axisDirs[vAxisKey.axis].clone();
   const normalDir = uDir.clone().cross(vDir).normalize();
   const thicknessDir = axisDirs[thicknessKey.axis].clone();
 

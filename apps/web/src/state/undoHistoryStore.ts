@@ -43,7 +43,16 @@ export function createSnapshotFromProp(prop: GenericProp): GenericPropSnapshot {
           offsetUV: { ...prop.dockAttachment.offsetUV },
           surfaceSnapshot: prop.dockAttachment.surfaceSnapshot
             ? prop.dockAttachment.surfaceSnapshot.type === 'rect'
-              ? { ...prop.dockAttachment.surfaceSnapshot }
+              ? {
+                  ...prop.dockAttachment.surfaceSnapshot,
+                  canonical: prop.dockAttachment.surfaceSnapshot.canonical
+                    ? {
+                        sampleCount: prop.dockAttachment.surfaceSnapshot.canonical.sampleCount,
+                        samples: prop.dockAttachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                        weights: [...prop.dockAttachment.surfaceSnapshot.canonical.weights],
+                      }
+                    : undefined,
+                }
               : {
                   ...prop.dockAttachment.surfaceSnapshot,
                   points: prop.dockAttachment.surfaceSnapshot.points.map(([x, y]) => [x, y] as [number, number]),
@@ -53,6 +62,13 @@ export function createSnapshotFromProp(prop: GenericProp): GenericPropSnapshot {
                         right: [...prop.dockAttachment.surfaceSnapshot.obb.right] as [number, number],
                         up: [...prop.dockAttachment.surfaceSnapshot.obb.up] as [number, number],
                         extents: [...prop.dockAttachment.surfaceSnapshot.obb.extents] as [number, number],
+                      }
+                    : undefined,
+                  canonical: prop.dockAttachment.surfaceSnapshot.canonical
+                    ? {
+                        sampleCount: prop.dockAttachment.surfaceSnapshot.canonical.sampleCount,
+                        samples: prop.dockAttachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                        weights: [...prop.dockAttachment.surfaceSnapshot.canonical.weights],
                       }
                     : undefined,
                 }

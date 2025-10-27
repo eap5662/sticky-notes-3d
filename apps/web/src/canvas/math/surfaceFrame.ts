@@ -143,6 +143,32 @@ function closestPointOnPolygon(u: number, v: number, points: Array<[number, numb
   return closest;
 }
 
+function normalizePolygonPoints(meta: SurfaceMeta): Array<[number, number]> {
+  if (!meta.shape || meta.shape.type !== 'polygon') {
+    return [];
+  }
+
+  const width = meta.extents.u || 1;
+  const depth = meta.extents.v || 1;
+
+  const normalized = meta.shape.points.map(([px, py]) => [
+    width !== 0 ? px / width : px,
+    depth !== 0 ? py / depth : py,
+  ]) as Array<[number, number]>;
+
+  if (normalized.length === 0) {
+    return normalized;
+  }
+
+  const first = normalized[0];
+  const last = normalized[normalized.length - 1];
+  if (Math.abs(first[0] - last[0]) > 1e-6 || Math.abs(first[1] - last[1]) > 1e-6) {
+    normalized.push([first[0], first[1]]);
+  }
+
+  return normalized;
+}
+
 export function clampUVToShape(meta: SurfaceMeta | null, u: number, v: number): { u: number; v: number } {
   if (!meta || !meta.shape) {
     return { u, v };
@@ -156,15 +182,19 @@ export function clampUVToShape(meta: SurfaceMeta | null, u: number, v: number): 
   }
 
   if (meta.shape.type === 'polygon') {
-    const { points } = meta.shape;
+    const normalized = normalizePolygonPoints(meta);
+    if (normalized.length < 3) {
+      return { u, v };
+    }
 
     // Check if point is inside polygon
-    if (pointInPolygon(u, v, points)) {
+    if (pointInPolygon(u, v, normalized)) {
       return { u, v };
     }
 
     // Point is outside, clamp to nearest boundary
-    return closestPointOnPolygon(u, v, points);
+    const clamped = closestPointOnPolygon(u, v, normalized);
+    return clamped;
   }
 
   // Fallback to basic clamp
