@@ -313,7 +313,12 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
                     width: deskSurfaceMeta.shape.width,
                     height: deskSurfaceMeta.shape.height,
                   }
-                : undefined,
+                : deskSurfaceMeta.shape && deskSurfaceMeta.shape.type === 'polygon'
+                  ? {
+                      type: 'polygon',
+                      points: deskSurfaceMeta.shape.points.map(([x, y]) => [x, y] as [number, number]),
+                    }
+                  : undefined,
           };
         }
       }

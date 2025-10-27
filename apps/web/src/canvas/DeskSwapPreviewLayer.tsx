@@ -163,11 +163,7 @@ function GhostGLTF({ entry, position, rotation, scale }: GhostGLTFProps) {
             uAxis: surface.uAxis,
             vAxis: surface.vAxis,
             baseSurfaceId: surfaceConfig.id,
-            shape: {
-              type: 'rect',
-              width: debug.extents.u,
-              height: debug.extents.v,
-            },
+            shape: debug.shape,
           },
         };
       } catch (err) {

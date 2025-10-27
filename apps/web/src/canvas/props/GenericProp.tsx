@@ -120,11 +120,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
             uAxis: surface.uAxis as Vec3,
             vAxis: surface.vAxis as Vec3,
             baseSurfaceId: surf.id,
-            shape: {
-              type: 'rect' as const,
-              width: debug.extents.u,
-              height: debug.extents.v,
-            },
+            shape: debug.shape,
           });
         },
       };

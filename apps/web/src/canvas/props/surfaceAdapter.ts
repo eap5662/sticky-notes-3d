@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { Surface, Vec3 } from '@/canvas/surfaces';
+import type { SurfaceShape } from '@/state/surfaceMetaStore';
+import { extractPolygonFromNode, DEFAULT_EXTRACTION_PARAMS, type ExtractionParams } from '@/canvas/math/polygonGeometry';
 
 type AxisKey = 'x' | 'y' | 'z';
 
@@ -11,6 +13,23 @@ export type SurfaceExtractOptions = {
    * - 'center': use the mid-plane between both faces.
    */
   normalSide?: 'positive' | 'negative' | 'center';
+  /**
+   * Enable polygon boundary extraction (default: true for desk surfaces).
+   * When true, attempts to extract precise polygon shape from geometry.
+   * When false or extraction fails, falls back to rect from extents.
+   */
+  extractPolygon?: boolean;
+  /**
+   * Parameters for polygon extraction algorithm.
+   */
+  polygonParams?: Partial<ExtractionParams>;
+  /**
+   * Tier A: Manually authored polygon shape in UV coordinates (0-1 range).
+   * When provided, skips automatic extraction and uses this polygon directly.
+   * Coordinates are normalized (0,0) = origin, (1,1) = origin + uAxis + vAxis.
+   * Example for L-shape: [[0,0], [0.6,0], [0.6,0.4], [1,0.4], [1,1], [0,1], [0,0]]
+   */
+  authoredPolygon?: Array<[number, number]>;
 };
 
 export type PropTransform = {
@@ -26,6 +45,7 @@ export type SurfaceDebugInfo = {
   uDir: THREE.Vector3;
   vDir: THREE.Vector3;
   localBounds: THREE.Box3;
+  shape: SurfaceShape;
 };
 
 export type SurfaceExtractResult = {
@@ -176,13 +196,17 @@ export function extractSurfaceFromNode(
   const axisDirs: Record<AxisKey, THREE.Vector3> = { x: xDir, y: yDir, z: zDir };
 
   const uDir = axisDirs[uAxisKey.axis].clone();
-  const vDir = axisDirs[vAxisKey.axis].clone();
+  let vDir = axisDirs[vAxisKey.axis].clone();
   const normalDir = uDir.clone().cross(vDir).normalize();
   const thicknessDir = axisDirs[thicknessKey.axis].clone();
 
   const alignSign = Math.sign(normalDir.dot(thicknessDir)) || 1;
   if (alignSign < 0) {
+    // Flip normal to align with desired thickness direction
     normalDir.multiplyScalar(-1);
+    // IMPORTANT: Also flip vDir to maintain right-handed coordinate system
+    // (so that uDir × vDir = normalDir remains true)
+    vDir.multiplyScalar(-1);
   }
 
   const uLength = extents[uAxisKey.axis];
@@ -236,6 +260,61 @@ export function extractSurfaceFromNode(
     zLift: 0,
   };
 
+  // Determine polygon shape (Tier A > Tier B > Tier C)
+  let shape: SurfaceShape = {
+    type: 'rect',
+    width: uLength * uniformScale,
+    height: vLength * uniformScale,
+  };
+
+  // Tier A: Use authored polygon if provided (highest priority)
+  if (opts.authoredPolygon && opts.authoredPolygon.length >= 3) {
+    // Convert normalized UV coordinates (0-1) to world-space meters
+    const pointsInMeters = opts.authoredPolygon.map(([u, v]) => [
+      u * uLength * uniformScale,
+      v * vLength * uniformScale,
+    ] as [number, number]);
+
+    console.log('[surfaceAdapter] Using Tier A authored polygon:', {
+      vertices: opts.authoredPolygon.length,
+      normalizedSample: opts.authoredPolygon.slice(0, 3),
+      metersSample: pointsInMeters.slice(0, 3),
+    });
+
+    shape = {
+      type: 'polygon',
+      points: pointsInMeters,
+    };
+  }
+  // Tier B: Attempt automatic polygon extraction from geometry
+  else if (opts.extractPolygon !== false) {
+    const params = { ...DEFAULT_EXTRACTION_PARAMS, ...opts.polygonParams };
+    const polygonRings = extractPolygonFromNode(
+      node,
+      originWorld,
+      normalDir,
+      uAxis,
+      vAxis,
+      params
+    );
+
+    if (polygonRings && polygonRings.outer.length >= 3) {
+      console.log('[surfaceAdapter] Tier B polygon extraction succeeded:', {
+        outerPoints: polygonRings.outer.length,
+        holes: polygonRings.holes.length,
+      });
+      shape = {
+        type: 'polygon',
+        points: polygonRings.outer,
+      };
+    } else {
+      console.log('[surfaceAdapter] Tier B polygon extraction failed, using Tier C rect fallback', {
+        outerPoints: polygonRings?.outer.length ?? 0,
+      });
+    }
+  }
+  // Tier C: Rect fallback (already set above)
+
   const debug: SurfaceDebugInfo = {
     center: centerWorld,
     extents: { u: uLength * uniformScale, v: vLength * uniformScale, thickness: thickness * uniformScale },
@@ -243,6 +322,7 @@ export function extractSurfaceFromNode(
     uDir,
     vDir,
     localBounds: boundsLocal.clone(),
+    shape,
   };
 
   return { surface, debug };

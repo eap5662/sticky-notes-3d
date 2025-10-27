@@ -73,6 +73,76 @@ export function unprojectFromSurface(meta: SurfaceMeta | null, u: number, v: num
   return [point.x, point.y, point.z];
 }
 
+/**
+ * Check if point is inside polygon using winding number algorithm.
+ */
+function pointInPolygon(u: number, v: number, points: Array<[number, number]>): boolean {
+  if (points.length < 3) return false;
+
+  let winding = 0;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[i + 1];
+
+    if (y1 <= v) {
+      if (y2 > v) {
+        // Upward crossing
+        const cross = (x2 - x1) * (v - y1) - (u - x1) * (y2 - y1);
+        if (cross > 0) winding++;
+      }
+    } else {
+      if (y2 <= v) {
+        // Downward crossing
+        const cross = (x2 - x1) * (v - y1) - (u - x1) * (y2 - y1);
+        if (cross < 0) winding--;
+      }
+    }
+  }
+
+  return winding !== 0;
+}
+
+/**
+ * Find closest point on polygon boundary.
+ */
+function closestPointOnPolygon(u: number, v: number, points: Array<[number, number]>): { u: number; v: number } {
+  let minDist = Infinity;
+  let closest = { u, v };
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[i + 1];
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+
+    if (lenSq < 1e-10) {
+      // Degenerate segment, check point distance
+      const dist = Math.sqrt((u - x1) ** 2 + (v - y1) ** 2);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = { u: x1, v: y1 };
+      }
+      continue;
+    }
+
+    // Project point onto line segment
+    const t = Math.max(0, Math.min(1, ((u - x1) * dx + (v - y1) * dy) / lenSq));
+    const projU = x1 + t * dx;
+    const projV = y1 + t * dy;
+
+    const dist = Math.sqrt((u - projU) ** 2 + (v - projV) ** 2);
+    if (dist < minDist) {
+      minDist = dist;
+      closest = { u: projU, v: projV };
+    }
+  }
+
+  return closest;
+}
+
 export function clampUVToShape(meta: SurfaceMeta | null, u: number, v: number): { u: number; v: number } {
   if (!meta || !meta.shape) {
     return { u, v };
@@ -85,7 +155,19 @@ export function clampUVToShape(meta: SurfaceMeta | null, u: number, v: number): 
     };
   }
 
-  // Polygon support TBD – fall back to basic clamp
+  if (meta.shape.type === 'polygon') {
+    const { points } = meta.shape;
+
+    // Check if point is inside polygon
+    if (pointInPolygon(u, v, points)) {
+      return { u, v };
+    }
+
+    // Point is outside, clamp to nearest boundary
+    return closestPointOnPolygon(u, v, points);
+  }
+
+  // Fallback to basic clamp
   return {
     u: Math.min(1, Math.max(0, u)),
     v: Math.min(1, Math.max(0, v)),

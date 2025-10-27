@@ -41,11 +41,7 @@ export function useRegisterSurface(params: {
         origin: surface.origin,
         uAxis: surface.uAxis,
         vAxis: surface.vAxis,
-        shape: {
-          type: 'rect',
-          width: debug.extents.u,
-          height: debug.extents.v,
-        },
+        shape: debug.shape,
       });
       onExtract?.(debug);
     } catch (err) {
@@ -81,11 +77,7 @@ export function useRegisterSurface(params: {
             origin: surface.origin,
             uAxis: surface.uAxis,
             vAxis: surface.vAxis,
-            shape: {
-              type: 'rect',
-              width: debug.extents.u,
-              height: debug.extents.v,
-            },
+            shape: debug.shape,
           });
           onExtract?.(debug);
         } catch (err) {

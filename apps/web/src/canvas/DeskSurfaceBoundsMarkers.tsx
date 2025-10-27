@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { Line, useGLTF } from '@react-three/drei';
+import earcut from 'earcut';
 
 import { useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { useGenericProps } from '@/canvas/hooks/useGenericProps';
@@ -16,8 +17,71 @@ const COLORS = [
 ];
 
 // Configuration for vertex markers
-const SHOW_VERTEX_MARKERS = true; // Toggle to enable/disable vertex visualization
-const VERTEX_DECIMATION = 1; // Only show every Nth vertex (1 = all, 10 = every 10th)
+const SHOW_VERTEX_MARKERS = false; // Toggle to enable/disable vertex visualization
+const VERTEX_DECIMATION = 10; // Only show every Nth vertex (1 = all, 10 = every 10th)
+
+/**
+ * Create triangulated BufferGeometry from polygon points using earcut.
+ * Returns rect geometry if shape is not polygon.
+ *
+ * IMPORTANT: Polygon points are in world-space meters (from polygon extraction),
+ * but we need normalized 0-1 coefficients for the geometry. We scale the geometry
+ * by extents during rendering, so vertices should be normalized here.
+ */
+function createShapeGeometry(meta: SurfaceMeta): THREE.BufferGeometry {
+  console.log('[createShapeGeometry] Called with meta.shape:', meta.shape);
+
+  if (!meta.shape || meta.shape.type === 'rect') {
+    console.log('[createShapeGeometry] Using PlaneGeometry for rect:', meta.extents);
+    // Fallback to plane geometry for rect
+    return new THREE.PlaneGeometry(meta.extents.u, meta.extents.v);
+  }
+
+  if (meta.shape.type === 'polygon') {
+    const { points } = meta.shape;
+    console.log('[createShapeGeometry] Creating polygon geometry with points:', points);
+    console.log('[createShapeGeometry] Extents for normalization:', meta.extents);
+
+    // Normalize points by extents (convert meters to 0-1 coefficients)
+    // Points are currently in world-space meters, need to divide by axis lengths
+    const normalizedPoints = points.map(([u, v]) => [
+      u / meta.extents.u,
+      v / meta.extents.v,
+    ] as [number, number]);
+
+    console.log('[createShapeGeometry] Sample normalized points:', normalizedPoints.slice(0, 3));
+
+    // Flatten normalized points for earcut
+    const vertices: number[] = [];
+    for (const [u, v] of normalizedPoints) {
+      vertices.push(u, v);
+    }
+
+    // Triangulate using earcut
+    const indices = earcut(vertices);
+    console.log('[createShapeGeometry] Earcut produced indices:', indices.length, 'triangles:', indices.length / 3);
+
+    // Create BufferGeometry
+    const geometry = new THREE.BufferGeometry();
+
+    // Convert 2D UV points to 3D positions (in local UV space, normalized 0-1)
+    const positions: number[] = [];
+    for (const [u, v] of normalizedPoints) {
+      positions.push(u, v, 0); // Z=0 in local UV plane
+    }
+
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+
+    console.log('[createShapeGeometry] Created geometry with', positions.length / 3, 'vertices');
+    return geometry;
+  }
+
+  // Fallback
+  console.log('[createShapeGeometry] Fallback to rect');
+  return new THREE.PlaneGeometry(meta.extents.u, meta.extents.v);
+}
 
 type BoundsMarkerProps = {
   meta: SurfaceMeta;
@@ -87,11 +151,26 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
         console.warn(`[BoundsMarker] Empty polygon for ${label}`);
         return null;
       }
-      corners = points2D.map(([u, v]) => new THREE.Vector3(
-        origin[0] + uAxis[0] * u + vAxis[0] * v,
-        origin[1] + uAxis[1] * u + vAxis[1] * v,
-        origin[2] + uAxis[2] * u + vAxis[2] * v,
-      ));
+      console.log('[BoundsMarker] Polygon points:', {
+        points: points2D.slice(0, 3),
+        origin,
+        uAxis,
+        vAxis,
+        extents: meta.extents
+      });
+
+      // IMPORTANT: Polygon points are in world-space meters from polygon extraction,
+      // but uAxis/vAxis are full-length vectors (not unit vectors).
+      // We need to normalize the points by dividing by extents to get 0-1 coefficients.
+      corners = points2D.map(([u, v]) => {
+        const uCoeff = u / meta.extents.u;  // Normalize to 0-1 range
+        const vCoeff = v / meta.extents.v;
+        return new THREE.Vector3(
+          origin[0] + uAxis[0] * uCoeff + vAxis[0] * vCoeff,
+          origin[1] + uAxis[1] * uCoeff + vAxis[1] * vCoeff,
+          origin[2] + uAxis[2] * uCoeff + vAxis[2] * vCoeff,
+        );
+      });
       corners.push(corners[0].clone());
     }
 
@@ -106,18 +185,27 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
   }, [meta, label, deskProp]);
 
   const rotation = useMemo(() => {
-    if (!points || points.length < 4) return new THREE.Euler(0, 0, 0);
+    if (!meta.uDir || !meta.vDir || !meta.normal) return new THREE.Euler(0, 0, 0);
 
-    // Compute rotation from the actual corner points (which are correctly positioned)
-    // This ensures the plane rotation matches the outline exactly
-    const corner0 = points[0];
-    const corner1 = points[1];
-    const corner3 = points[3];
+    // Use metadata axes directly (already in world space from surfaceAdapter)
+    // For rect shapes, we previously computed from corners, but for polygons with 35+ vertices,
+    // corners[0], [1], [3] are arbitrary boundary points, not axis-aligned corners!
+    const uDir = new THREE.Vector3(...meta.uDir).normalize();
+    const vDir = new THREE.Vector3(...meta.vDir).normalize();
+    const normal = new THREE.Vector3(...meta.normal).normalize();
 
-    // Compute surface axes from corners
-    const uDir = new THREE.Vector3().subVectors(corner1, corner0).normalize();
-    const vDir = new THREE.Vector3().subVectors(corner3, corner0).normalize();
-    const normal = new THREE.Vector3().crossVectors(uDir, vDir).normalize();
+    // Verify chirality: normal should equal uDir × vDir
+    const computedNormal = uDir.clone().cross(vDir);
+    const chiralityCheck = normal.dot(computedNormal);
+    console.log('[BoundsMarker rotation] Chirality check:', {
+      label,
+      uDir: meta.uDir,
+      vDir: meta.vDir,
+      normal: meta.normal,
+      computedNormal: [computedNormal.x, computedNormal.y, computedNormal.z],
+      dotProduct: chiralityCheck,
+      isRightHanded: chiralityCheck > 0.99,
+    });
 
     // PlaneGeometry: X is width (uDir), Y is height (vDir), Z is normal
     const rotMatrix = new THREE.Matrix4();
@@ -126,29 +214,63 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
     const euler = new THREE.Euler();
     euler.setFromRotationMatrix(rotMatrix);
 
+    console.log('[BoundsMarker rotation] Euler angles:', {
+      label,
+      euler: [euler.x, euler.y, euler.z],
+      order: euler.order,
+    });
+
     return euler;
-  }, [points]);
+  }, [meta.uDir, meta.vDir, meta.normal, label]);
 
-  // Lift the plane visualization up by 2cm along the normal for better visibility
-  const liftedCenter = useMemo(() => {
-    if (!deskProp) return null;
+  // Compute transform for the shape mesh
+  // For polygons: geometry is in UV space, need to transform to world space
+  // For rects: centered plane geometry, position at center
+  const shapeTransform = useMemo(() => {
+    if (!deskProp || !points || points.length < 4) return null;
 
-    const lift = 0.02; // 2cm
-    // Center and normal already include desk rotation (from node.matrixWorld)
-    const center = new THREE.Vector3(meta.center[0], meta.center[1], meta.center[2]);
-    const normal = new THREE.Vector3(meta.normal[0], meta.normal[1], meta.normal[2]);
+    const lift = 0.02; // 2cm lift for visibility
+    const normal = new THREE.Vector3(...meta.normal);
+    const deskPos = new THREE.Vector3(...deskProp.position);
 
-    // Just translate to world position (rotation already in metadata)
-    const position = new THREE.Vector3(...deskProp.position);
-    center.add(position);
+    if (meta.shape?.type === 'polygon') {
+      // Polygon geometry vertices are in UV space: (u, v, 0)
+      // We need to position at origin and apply rotation that maps UV axes to world uAxis/vAxis
 
-    // Lift along normal (which is already rotated)
-    center.add(normal.multiplyScalar(lift));
+      // Origin is already in world space (from surfaceAdapter), but does NOT include desk position
+      // (metadata is in GLTF-local space, only position needs to be added)
+      const origin = new THREE.Vector3(...(meta.origin || meta.center));
+      origin.add(deskPos); // Add desk position
+      origin.add(normal.clone().multiplyScalar(lift)); // Lift up
 
-    return [center.x, center.y, center.z] as [number, number, number];
-  }, [meta.center, meta.normal, deskProp]);
+      // Use the same rotation as the outline (computed from corners)
+      return {
+        position: [origin.x, origin.y, origin.z] as [number, number, number],
+        rotation,
+      };
+    } else {
+      // Rect: PlaneGeometry is centered at origin, so position at center
+      const center = new THREE.Vector3(...meta.center);
+      center.add(deskPos);
+      center.add(normal.clone().multiplyScalar(lift));
 
-  if (!points || !liftedCenter) {
+      return {
+        position: [center.x, center.y, center.z] as [number, number, number],
+        rotation,
+      };
+    }
+  }, [meta.origin, meta.center, meta.normal, meta.shape, deskProp?.position, points, rotation]);
+
+  const shapeGeometry = useMemo(() => {
+    console.log('[DeskSurfaceBoundsMarkers] Creating geometry for shape:', {
+      type: meta.shape?.type,
+      points: meta.shape?.type === 'polygon' ? meta.shape.points.length : 'N/A',
+      extents: meta.extents,
+    });
+    return createShapeGeometry(meta);
+  }, [meta.shape, meta.extents]);
+
+  if (!points || !shapeTransform) {
     return null;
   }
 
@@ -163,11 +285,12 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
       />
       {/* Add a semi-transparent fill to visualize the surface area, lifted up slightly */}
       <mesh
-        position={liftedCenter}
-        rotation={rotation}
+        position={shapeTransform.position}
+        rotation={shapeTransform.rotation}
+        scale={meta.shape?.type === 'polygon' ? [meta.extents.u, meta.extents.v, 1] : 1}
+        geometry={shapeGeometry}
         raycast={() => null}
       >
-        <planeGeometry args={[meta.extents.u, meta.extents.v]} />
         <meshBasicMaterial
           color={color}
           transparent
