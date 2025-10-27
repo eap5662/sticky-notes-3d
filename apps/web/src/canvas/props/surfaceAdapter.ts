@@ -23,13 +23,6 @@ export type SurfaceExtractOptions = {
    * Parameters for polygon extraction algorithm.
    */
   polygonParams?: Partial<ExtractionParams>;
-  /**
-   * Tier A: Manually authored polygon shape in UV coordinates (0-1 range).
-   * When provided, skips automatic extraction and uses this polygon directly.
-   * Coordinates are normalized (0,0) = origin, (1,1) = origin + uAxis + vAxis.
-   * Example for L-shape: [[0,0], [0.6,0], [0.6,0.4], [1,0.4], [1,1], [0,1], [0,0]]
-   */
-  authoredPolygon?: Array<[number, number]>;
 };
 
 export type PropTransform = {
@@ -260,34 +253,15 @@ export function extractSurfaceFromNode(
     zLift: 0,
   };
 
-  // Determine polygon shape (Tier A > Tier B > Tier C)
+  // Default shape is the rect from extents; upgrade to polygon when extraction succeeds.
   let shape: SurfaceShape = {
     type: 'rect',
     width: uLength * uniformScale,
     height: vLength * uniformScale,
   };
 
-  // Tier A: Use authored polygon if provided (highest priority)
-  if (opts.authoredPolygon && opts.authoredPolygon.length >= 3) {
-    // Convert normalized UV coordinates (0-1) to world-space meters
-    const pointsInMeters = opts.authoredPolygon.map(([u, v]) => [
-      u * uLength * uniformScale,
-      v * vLength * uniformScale,
-    ] as [number, number]);
-
-    console.log('[surfaceAdapter] Using Tier A authored polygon:', {
-      vertices: opts.authoredPolygon.length,
-      normalizedSample: opts.authoredPolygon.slice(0, 3),
-      metersSample: pointsInMeters.slice(0, 3),
-    });
-
-    shape = {
-      type: 'polygon',
-      points: pointsInMeters,
-    };
-  }
-  // Tier B: Attempt automatic polygon extraction from geometry
-  else if (opts.extractPolygon !== false) {
+  // Attempt automatic polygon extraction from geometry.
+  if (opts.extractPolygon !== false) {
     const params = { ...DEFAULT_EXTRACTION_PARAMS, ...opts.polygonParams };
     const polygonRings = extractPolygonFromNode(
       node,
@@ -299,7 +273,7 @@ export function extractSurfaceFromNode(
     );
 
     if (polygonRings && polygonRings.outer.length >= 3) {
-      console.log('[surfaceAdapter] Tier B polygon extraction succeeded:', {
+      console.log('[surfaceAdapter] polygon extraction succeeded:', {
         outerPoints: polygonRings.outer.length,
         holes: polygonRings.holes.length,
       });
@@ -308,12 +282,11 @@ export function extractSurfaceFromNode(
         points: polygonRings.outer,
       };
     } else {
-      console.log('[surfaceAdapter] Tier B polygon extraction failed, using Tier C rect fallback', {
+      console.log('[surfaceAdapter] polygon extraction failed, using rect fallback', {
         outerPoints: polygonRings?.outer.length ?? 0,
       });
     }
   }
-  // Tier C: Rect fallback (already set above)
 
   const debug: SurfaceDebugInfo = {
     center: centerWorld,

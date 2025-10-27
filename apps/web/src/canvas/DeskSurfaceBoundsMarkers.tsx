@@ -174,13 +174,6 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
       corners.push(corners[0].clone());
     }
 
-    // Apply the desk prop's transform to match GLTFProp rendering
-    // NOTE: Surface metadata is re-extracted when desk rotates (transformKey dependency),
-    // so rotation is already baked into origin/uAxis/vAxis via node.matrixWorld!
-    // We only need to translate by position, NOT rotate again (would cause double-rotation)
-    const position = new THREE.Vector3(...deskProp.position);
-    corners = corners.map(corner => corner.clone().add(position));
-
     return corners.length > 0 ? corners : null;
   }, [meta, label, deskProp]);
 
@@ -227,20 +220,16 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
   // For polygons: geometry is in UV space, need to transform to world space
   // For rects: centered plane geometry, position at center
   const shapeTransform = useMemo(() => {
-    if (!deskProp || !points || points.length < 4) return null;
+    if (!points || points.length < 4) return null;
 
     const lift = 0.02; // 2cm lift for visibility
     const normal = new THREE.Vector3(...meta.normal);
-    const deskPos = new THREE.Vector3(...deskProp.position);
 
     if (meta.shape?.type === 'polygon') {
       // Polygon geometry vertices are in UV space: (u, v, 0)
-      // We need to position at origin and apply rotation that maps UV axes to world uAxis/vAxis
-
-      // Origin is already in world space (from surfaceAdapter), but does NOT include desk position
-      // (metadata is in GLTF-local space, only position needs to be added)
+      // We need to position at origin and apply rotation that maps UV axes to world uAxis/vAxis.
+      // Origin/uAxis/vAxis are already in world space from surfaceAdapter.
       const origin = new THREE.Vector3(...(meta.origin || meta.center));
-      origin.add(deskPos); // Add desk position
       origin.add(normal.clone().multiplyScalar(lift)); // Lift up
 
       // Use the same rotation as the outline (computed from corners)
@@ -251,7 +240,6 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
     } else {
       // Rect: PlaneGeometry is centered at origin, so position at center
       const center = new THREE.Vector3(...meta.center);
-      center.add(deskPos);
       center.add(normal.clone().multiplyScalar(lift));
 
       return {
@@ -259,7 +247,7 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
         rotation,
       };
     }
-  }, [meta.origin, meta.center, meta.normal, meta.shape, deskProp?.position, points, rotation]);
+  }, [meta.origin, meta.center, meta.normal, meta.shape, points, rotation]);
 
   const shapeGeometry = useMemo(() => {
     console.log('[DeskSurfaceBoundsMarkers] Creating geometry for shape:', {

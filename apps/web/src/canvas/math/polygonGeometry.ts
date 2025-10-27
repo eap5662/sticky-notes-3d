@@ -618,8 +618,9 @@ function signedArea(points: UV[]): number {
 
 /**
  * Extract silhouette from closed mesh triangles.
- * For closed meshes (like L-shaped desk with top and bottom faces),
- * we extract all triangle edges and use concave hull to preserve shape.
+ * For closed meshes (like L-shaped desks with top/bottom faces), we project and
+ * cluster triangle vertices, identify boundary edges in UV space, and reuse the
+ * ring-ordering/simplification pipeline to recover the concave outline.
  */
 function extractSilhouetteFromTriangles(
   triangles: Triangle[],
@@ -628,358 +629,167 @@ function extractSilhouetteFromTriangles(
   vDir: THREE.Vector3,
   params: ExtractionParams
 ): PolygonRings | null {
-  console.log('[extractSilhouette] Processing', triangles.length, 'triangles from closed mesh');
+  const LOG_TAG = '[polygonFallback]';
+  console.log(`${LOG_TAG} processing ${triangles.length} coplanar triangles`);
 
-  // Collect all unique vertices
-  const vertexMap = new Map<string, THREE.Vector3>();
+  if (triangles.length === 0) {
+    console.warn(`${LOG_TAG} no triangles supplied`);
+    return null;
+  }
+
+  // Normalise projection axes so UV coordinates represent metres along each axis.
+  const uNorm = uDir.clone().normalize();
+  const vNorm = vDir.clone().normalize();
+
+  const clusterTol = Math.max(params.vertexMergeEps, 1e-5);
+  const clusters = new Map<string, {
+    index: number;
+    sumU: number;
+    sumV: number;
+    count: number;
+  }>();
+  const clusterList: {
+    index: number;
+    sumU: number;
+    sumV: number;
+    count: number;
+  }[] = [];
+
+  const quantise = (value: number) =>
+    Math.round(value / clusterTol) * clusterTol;
+
+  const getClusterIndex = (point: UV) => {
+    const key = `${quantise(point[0])},${quantise(point[1])}`;
+    let cluster = clusters.get(key);
+    if (!cluster) {
+      cluster = { index: clusterList.length, sumU: 0, sumV: 0, count: 0 };
+      clusters.set(key, cluster);
+      clusterList.push(cluster);
+    }
+    cluster.sumU += point[0];
+    cluster.sumV += point[1];
+    cluster.count += 1;
+    return cluster.index;
+  };
+
+  type TriangleIndices = [number, number, number];
+  const triIndices: TriangleIndices[] = [];
+
+  const projectToUV = (point: THREE.Vector3): UV => {
+    const rel = new THREE.Vector3().subVectors(point, planeOrigin);
+    return [rel.dot(uNorm), rel.dot(vNorm)];
+  };
+
   for (const tri of triangles) {
-    for (const vertex of [tri.a, tri.b, tri.c]) {
-      const key = makeVertexKey(vertex, params.vertexMergeEps);
-      if (!vertexMap.has(key)) {
-        vertexMap.set(key, vertex);
-      }
+    const aUV = projectToUV(tri.a);
+    const bUV = projectToUV(tri.b);
+    const cUV = projectToUV(tri.c);
+
+    const ia = getClusterIndex(aUV);
+    const ib = getClusterIndex(bUV);
+    const ic = getClusterIndex(cUV);
+
+    triIndices.push([ia, ib, ic]);
+  }
+
+  if (clusterList.length < 3) {
+    console.warn(`${LOG_TAG} insufficient unique vertices after clustering`, {
+      unique: clusterList.length,
+    });
+    return null;
+  }
+
+  const vertices: UV[] = clusterList.map(cluster => [
+    cluster.sumU / cluster.count,
+    cluster.sumV / cluster.count,
+  ] as UV);
+
+  const makeEdgeKey = (a: number, b: number) =>
+    a < b ? `${a}-${b}` : `${b}-${a}`;
+  const makeDirectedKey = (a: number, b: number) => `${a}->${b}`;
+
+  const directedCounts = new Map<string, number>();
+  const undirectedEdges = new Map<string, { min: number; max: number }>();
+
+  const registerDirectedEdge = (from: number, to: number) => {
+    if (from === to) return;
+    const dirKey = makeDirectedKey(from, to);
+    directedCounts.set(dirKey, (directedCounts.get(dirKey) || 0) + 1);
+
+    const key = makeEdgeKey(from, to);
+    if (!undirectedEdges.has(key)) {
+      undirectedEdges.set(key, { min: Math.min(from, to), max: Math.max(from, to) });
+    }
+  };
+
+  for (const [ia, ib, ic] of triIndices) {
+    registerDirectedEdge(ia, ib);
+    registerDirectedEdge(ib, ic);
+    registerDirectedEdge(ic, ia);
+  }
+
+  const boundaryEdges: { a: number; b: number }[] = [];
+  for (const edge of undirectedEdges.values()) {
+    const forward = directedCounts.get(makeDirectedKey(edge.min, edge.max)) || 0;
+    const reverse = directedCounts.get(makeDirectedKey(edge.max, edge.min)) || 0;
+
+    if (forward === 0 || reverse === 0) {
+      // Use whichever orientation exists so ordering has consistent direction.
+      boundaryEdges.push({
+        a: forward > 0 ? edge.min : edge.max,
+        b: forward > 0 ? edge.max : edge.min,
+      });
     }
   }
 
-  const uniqueVertices = Array.from(vertexMap.values());
-  console.log('[extractSilhouette] Found', uniqueVertices.length, 'unique vertices');
-
-  // Project to UV space
-  const pointsUV: UV[] = uniqueVertices.map(v => {
-    const rel = new THREE.Vector3().subVectors(v, planeOrigin);
-    const u = rel.dot(uDir);
-    const v_coord = rel.dot(vDir);
-    return [u, v_coord];
-  });
-
-  console.log('[extractSilhouette] UV points:', pointsUV);
-
-  // Try to reconstruct as orthogonal L-shape (6 vertices on 3×3 grid)
-  const lShape = reconstructOrthogonalL(pointsUV, params);
-  if (lShape) {
-    console.log('[extractSilhouette] ✓ Orthogonal L-shape reconstruction succeeded:', lShape.length, 'vertices');
-    return { outer: lShape, holes: [] };
-  }
-
-  // Fallback: Sort by angle around centroid (works for star-shaped polygons like L)
-  const centroidBased = reconstructByAngle(pointsUV, params);
-  if (centroidBased) {
-    console.log('[extractSilhouette] ✓ Centroid-based reconstruction succeeded:', centroidBased.length, 'vertices');
-    return { outer: centroidBased, holes: [] };
-  }
-
-  // Final fallback to convex hull
-  const hull = convexHull2D(pointsUV);
-  const simplified = rdpSimplify(hull, params.simplifyEps);
-  const snapped = axisSnapSegments(simplified, params.snapDeg);
-  const closed = ensureClosed(snapped, params.vertexMergeEps);
-
-  console.log('[extractSilhouette] ⚠️ Using convex hull fallback. Result:', closed.length, 'vertices');
-
-  return { outer: closed, holes: [] };
-}
-
-/**
- * Reconstruct orthogonal L-shape from 6 corner vertices on a 3×3 grid.
- *
- * Strategy:
- * 1. Snap to axis-aligned (0°/90°)
- * 2. Extract 3 unique U and 3 unique V values
- * 3. Detect which corner of the bounding rect is missing
- * 4. Emit the 6 vertices in correct CCW order
- */
-function reconstructOrthogonalL(points: UV[], params: ExtractionParams): UV[] | null {
-  if (points.length !== 6) {
-    console.log('[reconstructL] Wrong vertex count:', points.length, '(expected 6)');
+  if (boundaryEdges.length === 0) {
+    console.warn(`${LOG_TAG} failed to isolate boundary edges`, {
+      uniqueVertices: vertices.length,
+      edgeCount: undirectedEdges.size,
+    });
     return null;
   }
 
-  // Step 1: Snap to axis-aligned and deduplicate
-  let snapped = axisSnapSegments(points, params.snapDeg);
-  snapped = dedupeVertices(snapped, params.vertexMergeEps);
+  console.log(`${LOG_TAG} clustered vertices: ${vertices.length}, boundary edges: ${boundaryEdges.length}`);
 
-  console.log('[reconstructL] After snap/dedupe:', snapped.length, 'vertices');
+  // Convert boundary edges into THREE vectors so we can reuse existing ordering logic.
+  const edgeVectors: Edge[] = boundaryEdges.map(({ a, b }) => ({
+    a: new THREE.Vector3(vertices[a][0], vertices[a][1], 0),
+    b: new THREE.Vector3(vertices[b][0], vertices[b][1], 0),
+  }));
 
-  if (snapped.length !== 6) {
-    console.log('[reconstructL] Vertex count changed after snap/dedupe:', snapped.length);
+  const rings3D = orderEdgesIntoRings(edgeVectors, params.vertexMergeEps);
+  if (rings3D.length === 0) {
+    console.warn(`${LOG_TAG} ordering failed`, {
+      vertices: vertices.length,
+      boundaryEdges: boundaryEdges.length,
+    });
     return null;
   }
 
-  // Step 2: Extract unique U and V values
-  const uniqueU = Array.from(new Set(snapped.map(p => p[0]))).sort((a, b) => a - b);
-  const uniqueV = Array.from(new Set(snapped.map(p => p[1]))).sort((a, b) => a - b);
-
-  console.log('[reconstructL] Unique U values:', uniqueU.length, uniqueU);
-  console.log('[reconstructL] Unique V values:', uniqueV.length, uniqueV);
-
-  if (uniqueU.length !== 3 || uniqueV.length !== 3) {
-    console.log('[reconstructL] Not a 3×3 grid (needs 3 unique U and 3 unique V)');
-    return null;
-  }
-
-  const [x0, x1, x2] = uniqueU;
-  const [y0, y1, y2] = uniqueV;
-
-  // Step 3: Find which corner of the bounding rectangle is missing
-  const bigRectCorners: UV[] = [
-    [x0, y0], // bottom-left
-    [x2, y0], // bottom-right
-    [x2, y2], // top-right
-    [x0, y2], // top-left
-  ];
-
-  const pointSet = new Set(snapped.map(p => `${p[0].toFixed(6)},${p[1].toFixed(6)}`));
-  const missing = bigRectCorners.find(corner =>
-    !pointSet.has(`${corner[0].toFixed(6)},${corner[1].toFixed(6)}`)
+  const ringsUV = rings3D.map(ring =>
+    ring.map(point => [point.x, point.y] as UV)
   );
 
-  if (!missing) {
-    console.log('[reconstructL] No missing corner found (not an L-shape?)');
+  const closedRings = ringsUV.map(ring =>
+    ensureClosed(ring, params.vertexMergeEps)
+  );
+
+  const simplified = simplifyRings(closedRings, params);
+  const result = chooseOuterAndHoles(simplified);
+
+  if (result.outer.length < 3) {
+    console.warn(`${LOG_TAG} extraction yielded degenerate polygon`, {
+      outer: result.outer.length,
+    });
     return null;
   }
 
-  console.log('[reconstructL] Missing corner:', missing, '(bite location)');
-
-  // Step 4: Emit vertices in CCW order based on missing corner
-  let order: UV[];
-
-  if (missing[0] === x0 && missing[1] === y0) {
-    // Bite at bottom-left
-    order = [[x0, y2], [x0, y1], [x1, y1], [x1, y0], [x2, y0], [x2, y2]];
-  } else if (missing[0] === x2 && missing[1] === y0) {
-    // Bite at bottom-right
-    order = [[x0, y0], [x2, y0], [x2, y1], [x1, y1], [x1, y2], [x0, y2]];
-  } else if (missing[0] === x2 && missing[1] === y2) {
-    // Bite at top-right
-    order = [[x0, y0], [x2, y0], [x2, y2], [x1, y2], [x1, y1], [x0, y1]];
-  } else if (missing[0] === x0 && missing[1] === y2) {
-    // Bite at top-left
-    order = [[x0, y0], [x2, y0], [x2, y2], [x0, y2], [x0, y1], [x1, y1]];
-  } else {
-    console.log('[reconstructL] Unexpected missing corner:', missing);
-    return null;
-  }
-
-  // Close the loop
-  const closed = ensureClosed(order, params.vertexMergeEps);
-
-  // Verify CCW orientation (positive area)
-  const area = signedArea(closed);
-  console.log('[reconstructL] Signed area:', area, area > 0 ? '(CCW ✓)' : '(CW, reversing)');
-
-  if (area < 0) {
-    closed.reverse();
-  }
-
-  console.log('[reconstructL] ✓ Reconstructed L-shape:', closed.length, 'vertices');
-  return closed;
-}
-
-/**
- * Reconstruct polygon by sorting vertices by angle around centroid.
- * Works for star-shaped polygons (like L-shapes).
- */
-function reconstructByAngle(points: UV[], params: ExtractionParams): UV[] | null {
-  if (points.length < 3) return null;
-
-  // Compute centroid
-  let sumU = 0, sumV = 0;
-  for (const [u, v] of points) {
-    sumU += u;
-    sumV += v;
-  }
-  const centroid: UV = [sumU / points.length, sumV / points.length];
-
-  console.log('[reconstructByAngle] Centroid:', centroid);
-
-  // Sort by angle around centroid
-  const sorted = points.slice().sort((a, b) => {
-    const angleA = Math.atan2(a[1] - centroid[1], a[0] - centroid[0]);
-    const angleB = Math.atan2(b[1] - centroid[1], b[0] - centroid[0]);
-    return angleA - angleB;
+  console.log(`${LOG_TAG} success`, {
+    outerVertices: result.outer.length,
+    holeCount: result.holes.length,
   });
 
-  // Close the loop
-  const closed = ensureClosed(sorted, params.vertexMergeEps);
-
-  // Verify CCW orientation
-  const area = signedArea(closed);
-  console.log('[reconstructByAngle] Signed area:', area, area > 0 ? '(CCW ✓)' : '(CW, reversing)');
-
-  if (area < 0) {
-    closed.reverse();
-  }
-
-  console.log('[reconstructByAngle] ✓ Sorted:', closed.length, 'vertices');
-  return closed;
+  return result;
 }
 
-/**
- * DEPRECATED - Extract concave hull by finding the outer perimeter edges of triangle mesh.
- * Strategy: Build edge-to-triangle adjacency, find edges on the perimeter
- * (edges that would be boundary if we only had one layer), then walk them.
- */
-function extractConcaveHullFromTriangles_DEPRECATED(
-  triangles: Triangle[],
-  planeOrigin: THREE.Vector3,
-  uDir: THREE.Vector3,
-  vDir: THREE.Vector3,
-  params: ExtractionParams
-): UV[] | null {
-  console.log('[extractConcaveHull] Building edge map from', triangles.length, 'triangles');
-
-  // Build edge map: edge -> triangles that use it
-  const edgeMap = new Map<string, THREE.Vector3[]>();
-
-  for (const tri of triangles) {
-    const vertices = [tri.a, tri.b, tri.c];
-    for (let i = 0; i < 3; i++) {
-      const v1 = vertices[i];
-      const v2 = vertices[(i + 1) % 3];
-
-      const key = makeEdgeKey(v1, v2, params.spatialHashTol);
-      if (!edgeMap.has(key)) {
-        edgeMap.set(key, []);
-      }
-      edgeMap.get(key)!.push(v1, v2);
-    }
-  }
-
-  // Find perimeter edges: For a closed convex mesh, all edges would be shared by 2+ triangles.
-  // But for a CONCAVE mesh viewed from one side, some edges might appear only once
-  // in the visible triangles. However, our edge map shows all edges are shared.
-  //
-  // The key insight: we need to find the OUTER edges of the triangle mesh.
-  // Since we have no boundary edges, we need to use triangle ANGLE to detect perimeter.
-  //
-  // Alternative: Just use the convex hull vertices but ORDER them by walking the
-  // triangle edges to preserve concavity.
-
-  console.log('[extractConcaveHull] Total edges:', edgeMap.size);
-  console.log('[extractConcaveHull] ⚠️ Cannot reliably extract concave hull from closed mesh');
-  console.log('[extractConcaveHull] 💡 Falling back to convex hull (L-shapes require manual authoring or open mesh)');
-
-  return null;
-}
-
-/**
- * DEPRECATED - Fallback extraction for closed meshes (no boundary edges).
- * Collects all unique vertices from coplanar triangles, projects to UV,
- * and computes convex hull to get the outer silhouette.
- */
-function extractSilhouetteConvexHull(
-  triangles: Triangle[],
-  planeOrigin: THREE.Vector3,
-  uDir: THREE.Vector3,
-  vDir: THREE.Vector3,
-  params: ExtractionParams
-): PolygonRings | null {
-  console.log('[extractSilhouetteConvexHull] Extracting silhouette from', triangles.length, 'triangles');
-
-  // Collect all unique vertices from triangles
-  const vertexMap = new Map<string, THREE.Vector3>();
-  for (const tri of triangles) {
-    for (const vertex of [tri.a, tri.b, tri.c]) {
-      const key = makeVertexKey(vertex, params.vertexMergeEps);
-      if (!vertexMap.has(key)) {
-        vertexMap.set(key, vertex);
-      }
-    }
-  }
-
-  const uniqueVertices = Array.from(vertexMap.values());
-  console.log('[extractSilhouetteConvexHull] Found', uniqueVertices.length, 'unique vertices');
-
-  if (uniqueVertices.length < 3) {
-    console.warn('[extractSilhouetteConvexHull] ❌ Not enough vertices for hull');
-    return null;
-  }
-
-  // Project to UV space
-  const pointsUV: UV[] = uniqueVertices.map(v => {
-    const rel = new THREE.Vector3().subVectors(v, planeOrigin);
-    const u = rel.dot(uDir);
-    const v_coord = rel.dot(vDir);
-    return [u, v_coord];
-  });
-
-  // Compute convex hull using Gift Wrapping (Jarvis March) algorithm
-  const hull = convexHull2D(pointsUV);
-  console.log('[extractSilhouetteConvexHull] Convex hull:', hull.length, 'points');
-
-  if (hull.length < 3) {
-    console.warn('[extractSilhouetteConvexHull] ❌ Hull too small');
-    return null;
-  }
-
-  // Simplify
-  const simplified = rdpSimplify(hull, params.simplifyEps);
-  const snapped = axisSnapSegments(simplified, params.snapDeg);
-  const closed = ensureClosed(snapped, params.vertexMergeEps);
-
-  console.log('[extractSilhouetteConvexHull] ✓ Final hull:', closed.length, 'points');
-
-  return {
-    outer: closed,
-    holes: [],
-  };
-}
-
-/**
- * Compute 2D convex hull using Gift Wrapping (Jarvis March) algorithm.
- * Returns points in CCW order.
- */
-function convexHull2D(points: UV[]): UV[] {
-  if (points.length < 3) return points;
-
-  // Find leftmost point (guaranteed to be on hull)
-  let leftmost = 0;
-  for (let i = 1; i < points.length; i++) {
-    if (points[i][0] < points[leftmost][0] ||
-        (points[i][0] === points[leftmost][0] && points[i][1] < points[leftmost][1])) {
-      leftmost = i;
-    }
-  }
-
-  const hull: UV[] = [];
-  let current = leftmost;
-
-  do {
-    hull.push(points[current]);
-    let next = 0;
-
-    // Find the most counter-clockwise point from current
-    for (let i = 0; i < points.length; i++) {
-      if (i === current) continue;
-
-      const cross = crossProduct2D(points[current], points[next], points[i]);
-      if (next === current || cross > 0 ||
-          (cross === 0 && distanceSquared2D(points[current], points[i]) >
-           distanceSquared2D(points[current], points[next]))) {
-        next = i;
-      }
-    }
-
-    current = next;
-  } while (current !== leftmost);
-
-  return hull;
-}
-
-/**
- * 2D cross product: (B - A) × (C - A)
- * Positive = C is left of line AB (CCW turn)
- * Negative = C is right of line AB (CW turn)
- */
-function crossProduct2D(a: UV, b: UV, c: UV): number {
-  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-}
-
-/**
- * Squared distance between two 2D points
- */
-function distanceSquared2D(a: UV, b: UV): number {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  return dx * dx + dy * dy;
-}

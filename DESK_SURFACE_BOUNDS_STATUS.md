@@ -2,69 +2,51 @@
 
 ## Current State (2025-10-26)
 
-The desk surface bounds marking system has been implemented with **Tier B (automatic polygon extraction)** working successfully for most desk types, with partial support for L-shaped desks.
+The desk surface bounds system now relies solely on the automatic extractor plus the new closed-mesh boundary-walk fallback. Rectangular, curved, and modified corner (L) desks all yield accurate polygons; only drag-time drift remains under investigation.
 
 ### ✅ Working (Fully Functional)
 
-1. **Curved/Organic Desks** (e.g., curved desk with 120+ vertices)
-   - Tier B boundary edge extraction works perfectly
+1. **Curved/Organic Desks** (e.g., curved desk with hundreds of vertices)
+   - Boundary edge extraction works perfectly
    - Extracts 35-point polygon from 121 boundary vertices
    - Simplification and axis-snapping produce clean outline
    - Handles rotation, scale, drag transformations
 
-2. **Simple Rectangular Desks** (e.g., Tan desk)
-   - Tier B boundary edge extraction works
+2. **Simple Rectangular Desks** (e.g., Tan desk, Grey Computer Desk)
+   - Boundary edge extraction works
    - Produces 5-point polygon (4 corners + closing vertex)
    - All coordinate transformations working correctly
 
-3. **Monitor/Curved Surface Desks** (tested with Grey Computer Desk)
-   - Polygon extraction working
-   - Bounds rendering accurate
+3. **Closed-Mesh Desks** (e.g., Modified Corner Desk)
+   - Boundary-walk fallback reconstructs correct 6-point L outline
+   - Tracks rotation/scale updates without manual intervention
+
 
 ### ⚠️ Partially Working (Needs Refinement)
+- Dragging desks causes polygon markers to drift ahead of geometry (see "Transform Drift While Dragging" below).
 
-**L-Shaped Desks** (e.g., Modified Corner Desk)
-- **Status:** Desk is recognized as workspace (no more 'No Workspace Active' banner)
-- **Current Behavior:**
-  - Successfully detects 6 corner vertices
-  - Orthogonal L reconstruction algorithm detects 3×3 grid correctly
-  - Identifies missing corner (bite location) correctly
-  - Produces an L-shaped outline, but **not perfectly accurate to actual desk geometry**
-  - Logs show: `[reconstructL] Unique U values: 3`, `Unique V values: 3`, `Missing corner: [...] (bite location)`
+## Architecture Overview
 
-**Known Issues with L-Shape:**
-- The reconstructed L-shape is "somewhat closer to correct, but not accurate"
-- Likely causes:
-  - Axis snapping may be over-aggressive for non-perfectly-orthogonal L-shapes
-  - 3×3 grid assumption may not match actual vertex positions after rotation/scale
-  - Missing corner detection logic may need refinement for rotated desks
-  - Vertex ordering in the lookup table may need adjustment
+### Primary Extraction (Open Meshes)
+- **Status:** Stable for desks with exposed top faces (rectangular, curved).
+- **Pipeline:**
+  1. Collect coplanar triangles aligned with the surface normal.
+  2. Extract boundary edges (single-triangle usage).
+  3. Order edges into rings and project into UV space.
+  4. Simplify with RDP, snap near-orthogonal segments, dedupe, and ensure closure.
 
-## Architecture: Tiered Extraction System
+### Closed-Mesh Fallback (Tessellated Tops)
+- **Status:** New boundary-walk solution (2025-10-26); handles L-shaped desks and any closed planar mesh.
+- **Pipeline:**
+  1. Project triangle vertices into UV using normalized axes.
+  2. Cluster near-coincident UV points to recover canonical vertices.
+  3. Track directed edge usage; edges missing a counter-wound partner are treated as boundary.
+  4. Reuse the core ring-ordering + simplification flow for final polygon output.
+- **Notes:** Sensitive to `vertexMergeEps` tolerance; tune if future assets are noisier.
 
-### Tier A: Authored Shapes (Manual)
-- **Status:** Implemented but not recommended
-- **Use case:** Manual polygon definition in `propCatalog.ts`
-- **Pros:** 100% reliable, designer knows exact shape
-- **Cons:** Requires manual work per desk, not scalable, rejected by user
-
-### Tier B: Automatic Polygon Extraction (Current Focus)
-- **Status:** Working for open meshes, partial for closed meshes
-- **Algorithm Flow:**
-  1. Collect coplanar triangles (filtering by normal direction)
-  2. Extract boundary edges (edges used by only 1 triangle)
-  3. Order edges into rings
-  4. Project to UV space, simplify, snap to axes
-  5. **Fallback for closed meshes:** Orthogonal L reconstruction or centroid-based sorting
-
-**Tier B Sub-strategies for Closed Meshes:**
-- **Orthogonal L Reconstruction:** For axis-aligned L-shapes with 6 vertices on 3×3 grid
-- **Centroid-based Sorting:** Sort vertices by angle around centroid (works for star-shaped polygons)
-- **Convex Hull (deprecated):** Fills concavities, wrong for L-shapes
-
-### Tier C: Rect Fallback
-- **Status:** Always available as final fallback
-- Uses bounding box from surface extents
+### Rect Fallback
+- **Status:** Final safety net when polygon extraction fails.
+- **Implementation:** Uses surface extents to emit planar rectangle (unchanged).
 
 ## Key Fixes Implemented
 
@@ -111,45 +93,34 @@ if (dot < Math.max(params.normalDotMin, 0.9)) continue;
 
 ---
 
-### 3. Orthogonal L-Shape Reconstruction Algorithm
-**Problem:** Convex hull fills the concave corner of L-shapes.
+### 3. Closed-Mesh Boundary Walk
+**Problem:** L-shaped desk surfaced as a closed mesh; prior grid/centroid heuristics produced distorted outlines or failed outright.
 
-**Solution:** Implemented grid-based reconstruction algorithm:
+**Solution:** Project triangles into UV space, cluster coincident points, record directed edge usage, and treat edges lacking an opposite direction as the true perimeter before feeding the existing ring simplifier.
 
-**Algorithm:**
-1. Project 6 corner vertices to UV space
-2. Snap to axis-aligned (0°/90°)
-3. Extract 3 unique U values and 3 unique V values (3×3 grid)
-4. Detect which corner of bounding rectangle is missing (the 'bite')
-5. Emit 6 vertices in CCW order based on bite location
+**File:** `apps/web/src/canvas/math/polygonGeometry.ts` (fallback in `extractSilhouetteFromTriangles`)
 
-**Lookup Table:**
-```typescript
-switch (missingCorner) {
-  case (x0,y0): order = [(x0,y2),(x0,y1),(x1,y1),(x1,y0),(x2,y0),(x2,y2)]  // bite bottom-left
-  case (x2,y0): order = [(x0,y0),(x2,y0),(x2,y1),(x1,y1),(x1,y2),(x0,y2)]  // bite bottom-right
-  case (x2,y2): order = [(x0,y0),(x2,y0),(x2,y2),(x1,y2),(x1,y1),(x0,y1)]  // bite top-right
-  case (x0,y2): order = [(x0,y0),(x2,y0),(x2,y2),(x0,y2),(x0,y1),(x1,y1)]  // bite top-left
-}
-```
-
-**File:** `apps/web/src/canvas/math/polygonGeometry.ts:691-776`
-
-**Result:** L-shape is recognized and extracted, but not perfectly accurate to actual desk geometry.
+**Result:** Modified corner desk now yields a six-vertex polygon aligned with the real geometry; works for any planar concave shape.
 
 ---
 
-### 4. Centroid-Based Sorting Fallback
-**Purpose:** Handle cases where orthogonal L reconstruction fails (non-axis-aligned, wrong vertex count, etc.)
+### 4. Bounds Marker Translation Fix
+**Problem:** Overlay polygon drifted during drags because desk position was added twice (once baked into metadata, once during rendering).
 
-**Algorithm:**
-1. Compute centroid of all vertices
-2. Sort vertices by angle around centroid (atan2)
-3. Close the loop
+**Solution:** Stop re-applying `deskProp.position` when constructing marker corners.
 
-**File:** `apps/web/src/canvas/math/polygonGeometry.ts:782-815`
+**File:** `apps/web/src/canvas/DeskSurfaceBoundsMarkers.tsx`
 
-**Result:** Works for star-shaped polygons, provides graceful degradation.
+**Result:** Polygon markers now remain locked to the desk while dragging.
+
+---
+
+### 5. Removed Manual Tier & Legacy Helpers
+**Problem:** Tier A (`authoredPolygon`) and the legacy L-shape helpers increased complexity without being used.
+
+**Fix:** Deleted the manual polygon option from `surfaceAdapter.ts` and removed deprecated reconstruction/hull helpers from `polygonGeometry.ts`.
+
+**Result:** Desk bounds flow relies solely on the automatic extractor with consistent logging and fewer code paths to maintain.
 
 ## Approaches Tried That Failed
 
@@ -222,38 +193,28 @@ Geometry Rendering: normalized (0-1) vertices, scaled by extents, positioned at 
 
 ## Known Limitations
 
-1. **L-Shaped Desks (Closed Meshes):**
-   - Orthogonal L reconstruction produces approximate shape, not pixel-perfect
-   - Assumes 3×3 grid structure (may not hold for rotated/scaled desks)
-   - Axis snapping may over-simplify non-orthogonal L-shapes
+1. **Concave Shapes Beyond L**
+   - Boundary walk is validated on the modified corner desk; U-/C-shaped desks still untested.
+   - Current simplifier assumes a single outer ring; inner voids/holes remain unsupported.
 
-2. **Complex Concave Shapes:**
-   - No general concave hull implementation
-   - Falls back to convex hull (loses concavities)
-   - May require Tier A (manual authoring) for complex shapes
-
-3. **Performance:**
+2. **Performance**
    - Polygon extraction runs on every surface metadata update
    - Re-extracts on rotation, scale changes
    - Could be optimized with caching
 
-## Next Steps for L-Shape Refinement
+## Next Steps
 
-1. **Debug Orthogonal L Reconstruction:**
-   - Log actual vertex positions vs. reconstructed positions
-   - Check if axis snapping is too aggressive
-   - Verify grid detection handles rotated desks correctly
-   - Test with multiple L-shaped desk models
+1. **Validate Closed-Mesh Fallback**
+   - Test additional concave desks (U, C, multi-bite) and rotated variants.
+   - Add unit/integration snapshots for representative meshes if feasible.
 
-2. **Alternative Approaches:**
-   - Implement proper concave hull / alpha shape algorithm
-   - Use triangle edge walking (if silhouette edges can be identified)
-   - Consider machine learning approach to detect shape from vertices
+2. **Verify Drag Alignment**
+   - Manually test long-distance drags on multiple desks to confirm overlays remain locked.
+   - Add regression notes/tests so future refactors keep metadata/world-space alignment intact.
 
-3. **Fallback Strategy:**
-   - Document limitation in user-facing docs
-   - Suggest users create desk models with separate top face (open mesh)
-   - Provide Tier A template for common L-shape orientations
+3. **Performance / Logging Hygiene**
+   - Evaluate caching strategy or throttling for rapid updates.
+   - Trim verbose logs once investigations finish (retain tagged summaries).
 
 ## Testing Status
 
@@ -261,16 +222,15 @@ Geometry Rendering: normalized (0-1) vertices, scaled by extents, positioned at 
 - Curved desk (35 vertices from 121 boundary edges)
 - Tan desk (5 vertices, rectangular)
 - Grey Computer Desk (curved surface)
+- Modified corner desk (closed mesh L-shape; 6-point polygon)
 - Rotation transforms (all desks)
 - Scale transforms (all desks)
 - Chirality fix (no more mirroring)
 
 ### ⚠️ Needs More Testing
-- L-shaped desk accuracy refinement
-- Multiple L-desk models with different proportions
-- L-desks at various rotation angles
+- Additional concave desks (U/C shapes, multi-level bites)
+- Closed meshes with higher tessellation/noise
 - U-shaped desks, C-shaped desks (concave shapes)
-- Drag transforms (lower priority)
 
 ### ❌ Not Tested
 - Desks with holes (inner rings)
@@ -282,7 +242,7 @@ Geometry Rendering: normalized (0-1) vertices, scaled by extents, positioned at 
 
 Extensive debug logging is currently active in:
 - `polygonGeometry.ts` - All extraction steps
-- `surfaceAdapter.ts` - Tier A/B/C selection
+- `surfaceAdapter.ts` - Extraction success/failure summaries
 - `DeskSurfaceBoundsMarkers.tsx` - Chirality checks, rotation calculation
 
 **TODO:** Clean up debug logging before production (keep key milestone logs, remove verbose step-by-step).
@@ -290,5 +250,5 @@ Extensive debug logging is currently active in:
 ## References
 
 - **Chirality Issue Discussion:** October 26, 2025 session
-- **Orthogonal L Algorithm Suggestion:** User-provided algorithm in conversation
-- **Convex Hull Failure:** Tested and rejected, logs available
+- **Boundary Walk Fallback:** Implemented October 26, 2025 session
+- **Convex Hull Failure:** Tested and rejected, logs archived
