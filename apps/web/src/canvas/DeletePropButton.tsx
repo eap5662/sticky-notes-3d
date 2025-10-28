@@ -44,8 +44,8 @@ export default function DeletePropButton() {
   // Prevent desk deletion for now
   const isDesk = selectedGeneric.id === activeDeskId;
   const buttonClass = isDesk
-    ? 'pointer-events-auto rounded border border-red-600/30 bg-red-600/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-red-400/50 cursor-not-allowed'
-    : 'pointer-events-auto rounded border border-red-600/70 bg-red-600/70 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white hover:bg-red-600/90 transition-colors';
+    ? 'pointer-events-auto rounded-full border border-red-600/30 bg-red-600/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-400/50 cursor-not-allowed'
+    : 'pointer-events-auto rounded-full border border-red-600/70 bg-red-600/70 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white hover:bg-red-600/90 transition-colors';
 
   return (
     <button
@@ -53,6 +53,7 @@ export default function DeletePropButton() {
       className={buttonClass}
       onClick={isDesk ? undefined : handleDelete}
       disabled={isDesk}
+      style={{ marginTop: '0.95rem', marginLeft: '-6rem' }}
     >
       Delete Prop
     </button>

@@ -455,7 +455,7 @@ useEffect(() => {
             {/* Category Filters */}
             <div className="space-y-1">
               <div className="text-[10px] uppercase tracking-wide text-white/50 mb-1">Filter by Category</div>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-2 gap-2">
                 {sortedCategories.map((catDef) => {
                   const isActive = enabledCategories.has(catDef.id);
                   return (
@@ -464,7 +464,7 @@ useEffect(() => {
                       type="button"
                       onClick={() => toggleCategory(catDef.id)}
                       disabled={isSwapActive}
-                      className={`text-[11px] py-1 rounded border transition-all relative cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-white/30 ${
+                      className={`category-filter-btn text-[11px] py-1.5 rounded border transition-all relative cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-white/30 ${
                         isActive
                           ? 'bg-white/10 shadow-lg'
                           : 'bg-transparent'
@@ -473,28 +473,29 @@ useEffect(() => {
                         borderColor: isActive ? catDef.borderColor : `${catDef.borderColor}99`,
                         borderWidth: isActive ? '2px' : '1px',
                         color: isActive ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.7)',
-                        paddingLeft: catDef.id === 'surface' ? '2.25rem' : '1.75rem',
+                        paddingLeft: catDef.id === 'note-surface' ? '2.5rem' : '1.75rem',
                         paddingRight: '0.5rem',
                         textAlign: 'center',
-                        boxShadow: isActive ? `0 0 8px ${catDef.borderColor}40` : 'none'
-                      }}
+                        boxShadow: isActive ? `0 0 8px ${catDef.borderColor}40` : 'none',
+                        '--glow-color': `${catDef.borderColor}`,
+                      } as React.CSSProperties & { '--glow-color': string }}
                     >
                       <span className="absolute left-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                        {catDef.id === 'surface' ? (
-                          // Special case for Surfaces: show both monitor and board icons
+                        {catDef.id === 'note-surface' ? (
+                          // Special case for Note Surfaces: show both monitor and board icons
                           <>
                             <span className="text-xs">{SURFACE_TYPE_ICONS.monitor}</span>
                             <img
                               src={SURFACE_TYPE_ICONS.board}
                               alt="board"
-                              className="w-3 h-3 inline-block"
+                              className="w-3.5 h-3.5 inline-block"
                             />
                           </>
                         ) : catDef.iconPath ? (
                           <img
                             src={catDef.iconPath}
                             alt={catDef.label}
-                            className="w-4 h-4 inline-block"
+                            className="w-[18px] h-[18px] inline-block"
                           />
                         ) : (
                           catDef.icon
@@ -601,8 +602,8 @@ useEffect(() => {
                               {entry.categories.slice(0, 3).map((cat) => {
                                 const catMeta = CATEGORY_DEFINITIONS[cat];
 
-                                // Special case: for surface category, show specific surfaceType icon instead
-                                if (cat === 'surface' && entry.surfaceType) {
+                                // Special case: for note-surface category, show specific surfaceType icon instead
+                                if (cat === 'note-surface' && entry.surfaceType) {
                                   const surfaceIcon = SURFACE_TYPE_ICONS[entry.surfaceType];
                                   const isImagePath = surfaceIcon.startsWith('/');
                                   return (
@@ -647,7 +648,7 @@ useEffect(() => {
             )}
           </div>
 
-          {/* Custom Scrollbar Styles */}
+          {/* Custom Scrollbar Styles + Pulsing Ring Animation */}
           <style jsx>{`
             .custom-scrollbar::-webkit-scrollbar {
               width: 6px;
@@ -661,6 +662,21 @@ useEffect(() => {
             }
             .custom-scrollbar::-webkit-scrollbar-thumb:hover {
               background: rgba(255, 255, 255, 0.25);
+            }
+
+            /* Ensure consistent height for all filter buttons */
+            .category-filter-btn {
+              box-sizing: border-box;
+              border-width: 2px !important;
+            }
+
+            /* Simple hover glow enhancement */
+            .category-filter-btn:not(:disabled):hover {
+              box-shadow:
+                0 0 16px color-mix(in srgb, var(--glow-color) 50%, transparent),
+                0 0 32px color-mix(in srgb, var(--glow-color) 25%, transparent),
+                inset 0 0 0 1px color-mix(in srgb, var(--glow-color) 90%, transparent) !important;
+              border-color: var(--glow-color) !important;
             }
           `}</style>
           </motion.div>

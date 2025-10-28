@@ -451,7 +451,7 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
       <div className={containerClass}>
         <div className="pointer-events-auto w-64 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
           <div>
-            <div className="font-semibold">
+            <div className="font-semibold text-center">
               {rotationTarget.label} Rotation
             </div>
             <div className="mt-2 flex gap-2">
@@ -491,7 +491,7 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
             <>
               {!isDesk ? (
                 <div className="mt-3">
-                  <div className="font-semibold">Desk Attachment</div>
+                  <div className="font-semibold text-center">Desk Attachment</div>
                   <div className="mt-2">
                     {selectedGeneric.docked ? (
                       <button
@@ -526,7 +526,7 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
                 </div>
               ) : (
                 <div className="mt-3">
-                  <div className="font-semibold">Desk Controls</div>
+                  <div className="font-semibold text-center">Desk Controls</div>
                   <div className="mt-2 flex flex-col gap-2">
                     <button
                       type="button"

@@ -7,7 +7,7 @@ import { useUndoHistoryStore } from '@/state/undoHistoryStore';
 import { PROP_CATALOG } from '@/data/propCatalog';
 
 const MIN_USER_SCALE = 0.01; // Minimum user-visible scale (0.01x)
-const MAX_USER_SCALE = 10; // Maximum user-visible scale (10x)
+const MAX_USER_SCALE = 3.0; // Maximum user-visible scale (3.0x)
 const STEP = 0.01;
 
 type PropScaleControlsProps = {
@@ -176,10 +176,21 @@ export default function PropScaleControls({ className = '', overrideSelectionId 
     scaleBeforeRef.current = null;
   }, [target, selectedGeneric, pushAction]);
 
+  // Calculate isDocked before using it in callbacks
   const isDocked = target?.status === 'editing' ? false : selectedGeneric?.docked ?? false;
+
+  const handleSliderChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (!target || isDocked) return;
+      const scale = parseFloat(event.target.value);
+      handleScaleChange(scale);
+      setInputValue(formatDisplayValue(scale));
+    },
+    [target, isDocked, handleScaleChange, formatDisplayValue]
+  );
   const inputClass = isDocked
-    ? "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed"
-    : "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white focus:border-white/50 focus:outline-none";
+    ? "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+    : "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white focus:border-white/50 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
   const resetButtonClass = isDocked
     ? "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide opacity-40 cursor-not-allowed"
     : "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10";
@@ -196,6 +207,35 @@ export default function PropScaleControls({ className = '', overrideSelectionId 
           <div className="flex items-center justify-between text-xs uppercase tracking-wide text-white/70">
             <span>Scale Multiplier</span>
           </div>
+
+          {/* Linear Slider */}
+          <div className="mt-3 relative">
+            <input
+              type="range"
+              min={MIN_USER_SCALE}
+              max={MAX_USER_SCALE}
+              step={STEP}
+              value={pendingValue}
+              onChange={handleSliderChange}
+              onPointerDown={handlePointerDown}
+              onPointerUp={handlePointerUp}
+              disabled={isDocked}
+              className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                isDocked
+                  ? 'opacity-40 cursor-not-allowed bg-white/10'
+                  : 'bg-white/20'
+              } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-lg`}
+            />
+            {/* Tick marks */}
+            <div className="mt-1 flex justify-between text-[9px] text-white/40 px-0.5">
+              <span>0.01×</span>
+              <span>1×</span>
+              <span>2×</span>
+              <span>3×</span>
+            </div>
+          </div>
+
+          {/* Number Input */}
           <input
             type="number"
             min={MIN_USER_SCALE}
@@ -217,7 +257,7 @@ export default function PropScaleControls({ className = '', overrideSelectionId 
             placeholder="1"
           />
           <div className="mt-2 flex items-center justify-between text-[11px] text-white/60">
-            <span className="text-white/40">Range: {MIN_USER_SCALE}x – {MAX_USER_SCALE}x</span>
+            <span className="text-white/40">Range: 0.01x - 3.0x</span>
             <button
               type="button"
               className={resetButtonClass}

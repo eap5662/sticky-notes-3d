@@ -11,7 +11,7 @@ export type PropSurfaceConfig = {
   options?: SurfaceExtractOptions;
 };
 
-export type PropCategory = 'desk' | 'surface' | 'electronics' | 'desk-accessories' | 'supplies' | 'decorations';
+export type PropCategory = 'desk' | 'note-surface' | 'electronics' | 'desk-accessories' | 'supplies' | 'decorations';
 
 export type CategoryMetadata = {
   id: PropCategory;
@@ -25,7 +25,7 @@ export type CategoryMetadata = {
 
 export const CATEGORY_DEFINITIONS: Record<PropCategory, CategoryMetadata> = {
   'desk': { id: 'desk', label: 'Desks', icon: '🪑', iconPath: '/icons/categories/desk_icon.png', borderColor: '#8B5E3C', bgColor: '#EBD9CE', order: 1 },
-  'surface': { id: 'surface', label: 'Surfaces', icon: '🖥️', borderColor: '#2c78b6', bgColor: '#C6E3F9', order: 2 },
+  'note-surface': { id: 'note-surface', label: 'Note Surfaces', icon: '🖥️', borderColor: '#2c78b6', bgColor: '#C6E3F9', order: 2 },
   'electronics': { id: 'electronics', label: 'Electronics', icon: '⚡', iconPath: '/icons/categories/extension.png', borderColor: '#55f4a8', bgColor: '#D3FFED', order: 3 },
   'desk-accessories': { id: 'desk-accessories', label: 'Accessories', icon: '🖱️', iconPath: '/icons/categories/mug.png', borderColor: '#6a6a6a', bgColor: '#E2E2E2', order: 4 },
   'supplies': { id: 'supplies', label: 'Supplies', icon: '📝', iconPath: '/icons/categories/office-supplies.png', borderColor: '#eeeb61', bgColor: '#FFFEDE', order: 5 },
@@ -56,12 +56,11 @@ export type PropCatalogEntry = {
 export const PROP_CATALOG: PropCatalogEntry[] = [
   {
     id: 'desk-default',
-    label: 'Desk',
+    label: 'L-Desk',
     url: '/models/DeskTopPlane.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     primaryCategory: 'desk',
-    categories: ['desk', 'surface'],
-    surfaceType: 'board', // Desk is a horizontal surface/board
+    categories: ['desk'],
     surfaces: [
       {
         id: createSurfaceId('desk-surface'),
@@ -85,8 +84,8 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     url: '/models/monitor_processed.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     defaultRotation: [0, -Math.PI / 2, 0] as [number, number, number], // Face desk forward (-90° Y-rotation)
-    primaryCategory: 'surface',
-    categories: ['surface', 'electronics'],
+    primaryCategory: 'note-surface',
+    categories: ['note-surface', 'electronics'],
     surfaceType: 'monitor',
     surfaces: [
       {
@@ -193,8 +192,8 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     url: '/models/Whiteboard1.glb',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     defaultScale: 0.1, // Optimal: 0.1x
-    primaryCategory: 'surface',
-    categories: ['surface'],
+    primaryCategory: 'note-surface',
+    categories: ['note-surface'],
     surfaceType: 'board',
     surfaces: [
       {
@@ -209,13 +208,12 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
   // Props with Interactive Surfaces (3) - 2025-10-24 Batch
   {
     id: 'modified-corner-desk',
-    label: 'Modified Corner Desk',
+    label: 'Corner Desk',
     url: '/models/modified-corner-desk.glb?v=20251025',
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     defaultScale: 2.5, // Normalized to 1x in UI
     primaryCategory: 'desk',
-    categories: ['desk', 'surface'],
-    surfaceType: 'board',
+    categories: ['desk'],
     surfaces: [
       {
         id: createSurfaceId('modified-corner-desk-desk'),
@@ -234,8 +232,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
       align: { x: 'center', y: 'min', z: 'center' },
     },
     primaryCategory: 'desk',
-    categories: ['desk', 'surface'],
-    surfaceType: 'board',
+    categories: ['desk'],
     surfaces: [
       {
         id: createSurfaceId('grey-computer-desk-desk'),
@@ -252,8 +249,7 @@ export const PROP_CATALOG: PropCatalogEntry[] = [
     anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
     defaultScale: 1.75, // Normalized to 1x in UI
     primaryCategory: 'desk',
-    categories: ['desk', 'surface'],
-    surfaceType: 'board',
+    categories: ['desk'],
     surfaces: [
       {
         id: createSurfaceId('tan-desk-desk'),

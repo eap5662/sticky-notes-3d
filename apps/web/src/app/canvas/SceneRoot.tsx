@@ -34,9 +34,10 @@ import { useDelayedVisibility } from "@/canvas/hooks/useDelayedVisibility";
 import type { LayoutFrame } from "@/state/layoutFrameStore";
 import { useActiveDeskId, useActiveDeskProp } from "@/canvas/hooks/useDeskProp";
 
-const DESK_MOVE_STEP = 0.25;
-const DESK_MOVE_INTERVAL_MS = 200;
-const DESK_MOVE_KEYS = new Set(['w', 'a', 's', 'd']);
+const DESK_MOVE_STEP = 0.08;
+const PROP_MOVE_STEP = 0.04;
+const MOVE_INTERVAL_MS = 50;
+const MOVE_KEYS = new Set(['w', 'a', 's', 'd']);
 
 function projectHorizontal(vec: readonly number[]): Vec3 {
   return [vec[0], 0, vec[2]] as Vec3;
@@ -53,11 +54,16 @@ export default function SceneRoot() {
   const hasDesk = !!layoutState.frame;
 
   const deskPropRef = useRef<GenericProp | null>(deskProp);
+  const genericPropsRef = useRef<GenericProp[]>(genericProps);
 
   const layoutFrameRef = useRef<LayoutFrame | null>(layoutFrame);
   useEffect(() => {
     layoutFrameRef.current = layoutFrame;
   }, [layoutFrame]);
+
+  useEffect(() => {
+    genericPropsRef.current = genericProps;
+  }, [genericProps]);
 
   const selection = useSelection();
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
@@ -73,9 +79,11 @@ export default function SceneRoot() {
 
   useEffect(() => {
     const selectedId = selection?.kind === 'generic' ? selection.id : null;
+    const prevSelectedId = selectedIdRef.current;
     selectedIdRef.current = selectedId;
-    const desk = deskPropRef.current;
-    if (!desk || selectedId !== desk.id) {
+
+    // Clear pressed keys when selection changes
+    if (prevSelectedId !== selectedId) {
       pressedKeysRef.current.clear();
     }
   }, [selection]);
@@ -87,7 +95,8 @@ export default function SceneRoot() {
     }
   }, [deskProp]);
 
-  const applyDeskMovement = (
+  const applyPropMovement = (
+    propsRef: MutableRefObject<GenericProp[]>,
     deskRef: MutableRefObject<GenericProp | null>,
     frameRef: MutableRefObject<LayoutFrame | null>,
     keysRef: MutableRefObject<Set<string>>,
@@ -96,10 +105,15 @@ export default function SceneRoot() {
     const pressed = keysRef.current;
     if (pressed.size === 0) return;
 
-    const desk = deskRef.current;
-    if (!desk || desk.status === 'dragging') return;
     const selectedId = selectionRef.current;
-    if (!selectedId || selectedId !== desk.id) return;
+    if (!selectedId) return;
+
+    // Find selected prop
+    const selectedProp = propsRef.current.find(p => p.id === selectedId);
+    if (!selectedProp || selectedProp.status === 'dragging') return;
+
+    // Don't allow keyboard movement of docked or locked props
+    if (selectedProp.docked || selectedProp.locked) return;
 
     const frame = frameRef.current;
     const forward = frame ? projectHorizontal(frame.forward) : ([1, 0, 0] as Vec3);
@@ -132,18 +146,26 @@ export default function SceneRoot() {
     const length = Math.hypot(moveX, moveZ);
     if (length < 1e-6) return;
 
-    const scale = DESK_MOVE_STEP / length;
+    // Use different step sizes for desk vs other props
+    const isDesk = deskRef.current?.id === selectedId;
+    const stepSize = isDesk ? DESK_MOVE_STEP : PROP_MOVE_STEP;
+
+    const scale = stepSize / length;
     const deltaX = moveX * scale;
     const deltaZ = moveZ * scale;
 
     const nextPos: Vec3 = [
-      desk.position[0] + deltaX,
-      desk.position[1],
-      desk.position[2] + deltaZ,
+      selectedProp.position[0] + deltaX,
+      selectedProp.position[1],
+      selectedProp.position[2] + deltaZ,
     ];
 
-    setGenericPropPosition(desk.id, nextPos);
-    deskRef.current = { ...desk, position: nextPos };
+    setGenericPropPosition(selectedProp.id, nextPos);
+
+    // Update desk ref if moving the desk
+    if (isDesk) {
+      deskRef.current = { ...selectedProp, position: nextPos };
+    }
   };
 
   useDockConstraints();
@@ -237,21 +259,25 @@ export default function SceneRoot() {
   useEffect(() => {
     function handleKeyDown(ev: KeyboardEvent) {
       const key = ev.key.toLowerCase();
-      if (!DESK_MOVE_KEYS.has(key)) return;
+      if (!MOVE_KEYS.has(key)) return;
       if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return;
-      const desk = deskPropRef.current;
+
       const selectedId = selectedIdRef.current;
-      if (!desk || desk.status === 'dragging' || !selectedId || selectedId !== desk.id) return;
+      if (!selectedId) return;
+
+      const selectedProp = genericPropsRef.current.find(p => p.id === selectedId);
+      if (!selectedProp || selectedProp.status === 'dragging' || selectedProp.docked || selectedProp.locked) return;
+
       if (!pressedKeysRef.current.has(key)) {
         pressedKeysRef.current.add(key);
-        applyDeskMovement(deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
+        applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
       }
       ev.preventDefault();
     }
 
     function handleKeyUp(ev: KeyboardEvent) {
       const key = ev.key.toLowerCase();
-      if (!DESK_MOVE_KEYS.has(key)) return;
+      if (!MOVE_KEYS.has(key)) return;
       if (pressedKeysRef.current.delete(key)) {
         ev.preventDefault();
       }
@@ -267,8 +293,8 @@ export default function SceneRoot() {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      applyDeskMovement(deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
-    }, DESK_MOVE_INTERVAL_MS);
+      applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
+    }, MOVE_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
   }, []);
@@ -299,7 +325,7 @@ export default function SceneRoot() {
       <DebugHud />
       <UndoToast />
       <DeskDriveHint />
-      <div className="pointer-events-none absolute right-4 top-[0.5rem] z-20 flex flex-col items-end gap-2">
+      <div className="pointer-events-none absolute right-7 top-[0.5rem] z-20 flex flex-col items-end gap-2">
         {/* LAYER 1: Top row - always mounted, stable position */}
         <div className="pointer-events-none flex items-center gap-2">
           <AnimatePresence>
