@@ -3,7 +3,8 @@ import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import { deleteGenericProp } from '@/state/genericPropsStore';
 import { useCamera } from '@/state/cameraSlice';
-import { useUndoHistoryStore, createSnapshotFromProp } from '@/state/undoHistoryStore';
+import { useUndoHistoryStore } from '@/state/undoHistoryStore';
+import { createSnapshotFromProp } from '@/state/genericPropsStore';
 import { useActiveDeskId } from '@/canvas/hooks/useDeskProp';
 
 export default function DeletePropButton() {

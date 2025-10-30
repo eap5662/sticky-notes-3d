@@ -9,8 +9,12 @@ import {
   getGenericPropsSnapshot,
   setGenericPropStatus,
   setGenericPropLocked,
+  createSnapshotFromProp,
+  setGenericPropPosition,
+  setGenericPropRotation,
   dockPropWithAttachment,
   dockPropWithOffset,
+  undockProp,
   setDockOffset,
   setDockAttachment,
   type DockAttachment,
@@ -19,10 +23,18 @@ import {
   type GenericProp,
   type Vec3,
 } from '@/state/genericPropsStore';
-import { createSnapshotFromProp, useUndoHistoryStore, type DeskSwapAttachmentSnapshot } from '@/state/undoHistoryStore';
+import { useUndoHistoryStore, type DeskSwapAttachmentSnapshot } from '@/state/undoHistoryStore';
 import { setSelection } from '@/state/selectionStore';
 import type { SurfaceMeta } from '@/state/surfaceMetaStore';
-import { clampUVToShape, normalizedUVToProjected, projectPointToSurface, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
+import {
+  clampNormalizedUV,
+  normalizedUVToProjected,
+  projectPointToNormalized,
+  projectPointToSurface,
+  unprojectFromSurface,
+  isUVInsideSurface,
+} from '@/canvas/math/surfaceFrame';
+import { getAllSurfaceMeta } from '@/state/surfaceMetaStore';
 import { decodeCanonical, encodeCanonical, type CanonicalSnapshot } from '@/canvas/math/canonicalCoordinates';
 import { createSurfaceId } from '@/canvas/surfaces';
 
@@ -70,10 +82,14 @@ type DeskSwapState = {
 type AttachmentPlanSurface = {
   kind: 'surface';
   baseSurfaceId: string;
-  offsetUV: { u: number; v: number };
+  normalizedUV: { u: number; v: number };
+  projectedUV: { u: number; v: number };
   lift: number;
   yawRel: number;
   clampApplied: boolean;
+  targetPosition: Vec3;
+  sourceInside?: boolean;
+  targetInside?: boolean;
   canonicalSampleCount?: number;
 };
 
@@ -151,6 +167,8 @@ const CLAMP_EPSILON = 1e-4;
 
 const UV_EPSILON = 1e-5;
 
+const LIFT_EPSILON = 5e-4;
+
 function getPrimaryDeskSurface(surfaceMap: Record<string, SurfaceMeta | null>) {
   let fallback: { baseSurfaceId: string; meta: SurfaceMeta } | null = null;
   for (const [baseSurfaceId, meta] of Object.entries(surfaceMap)) {
@@ -165,29 +183,136 @@ function getPrimaryDeskSurface(surfaceMap: Record<string, SurfaceMeta | null>) {
   return fallback;
 }
 
-function createSurfacePlan(
-  baseSurfaceId: string,
-  meta: SurfaceMeta,
-  uv: { u: number; v: number },
-  lift: number,
-  yawRel: number,
-  options?: { canonicalSampleCount?: number },
-): AttachmentPlanSurface {
-  const projected = normalizedUVToProjected(meta, uv.u, uv.v);
-  const clamped = clampUVToShape(meta, projected.u, projected.v);
-  const delta = Math.abs(clamped.u - uv.u) + Math.abs(clamped.v - uv.v);
+function normalizeAngle(angle: number) {
+  const twoPi = Math.PI * 2;
+  let result = angle % twoPi;
+  if (result > Math.PI) {
+    result -= twoPi;
+  } else if (result < -Math.PI) {
+    result += twoPi;
+  }
+  return result;
+}
+
+function buildSourceSurfaceMap(deskId: string): Record<string, SurfaceMeta | null> {
+  const entries = getAllSurfaceMeta();
+  const surfaceMap: Record<string, SurfaceMeta | null> = {};
+  entries.forEach(([surfaceId, meta]) => {
+    if (meta.ownerId !== deskId) return;
+    const baseSurfaceId = getBaseSurfaceId(String(surfaceId));
+    if (baseSurfaceId) {
+      surfaceMap[baseSurfaceId] = meta;
+    }
+  });
+  return surfaceMap;
+}
+
+type SurfacePlacementSeed = {
+  baseSurfaceId: string;
+  meta: SurfaceMeta;
+  normalizedUV: { u: number; v: number };
+  projectedUV: { u: number; v: number };
+  lift: number;
+  yawRel: number;
+  sourceInside: boolean;
+  canonicalSampleCount?: number;
+};
+
+function resolveSourcePlacement(
+  prop: GenericProp,
+  sourceSurfaceMap: Record<string, SurfaceMeta | null>,
+  deskYaw: number,
+): SurfacePlacementSeed | null {
+  const attachment = prop.dockAttachment ?? null;
+  const offset = prop.dockOffset ?? null;
+
+  const preferredBaseId = attachment ? getBaseSurfaceId(String(attachment.surfaceId)) : null;
+  let baseSurfaceId: string | null = preferredBaseId;
+  let meta = baseSurfaceId ? sourceSurfaceMap[baseSurfaceId] ?? null : null;
+
+  if (!meta) {
+    const primary = getPrimaryDeskSurface(sourceSurfaceMap);
+    if (!primary) {
+      return null;
+    }
+    baseSurfaceId = primary.baseSurfaceId;
+    meta = primary.meta;
+  }
+
+  const yawRel = attachment?.yawRel ?? offset?.yaw ?? normalizeAngle((prop.rotation[1] ?? 0) - deskYaw);
+
+  let normalizedUV: { u: number; v: number } | null = null;
+  let projectedUV: { u: number; v: number } | null = null;
+  let lift: number | null = null;
+  let sourceInside = false;
+  let canonicalSampleCount: number | undefined;
+
+  if (attachment?.surfaceSnapshot?.canonical?.sampleCount) {
+    canonicalSampleCount = attachment.surfaceSnapshot.canonical.sampleCount;
+  }
+
+  const projection = projectPointToNormalized(meta, prop.position as Vec3);
+  if (projection) {
+    normalizedUV = projection.normalizedUV;
+    projectedUV = projection.projectedUV;
+    lift = projection.lift;
+    sourceInside = projection.inside;
+  }
+
+  if ((!normalizedUV || !sourceInside) && attachment) {
+    const decodedSnapshot = convertToCanonicalSnapshot(attachment.surfaceSnapshot?.canonical);
+    if (decodedSnapshot) {
+      const decoded = decodeCanonical(meta, decodedSnapshot, attachment.lift, yawRel);
+      if (decoded) {
+        normalizedUV = decoded.uv;
+        projectedUV = normalizedUVToProjected(meta, normalizedUV.u, normalizedUV.v);
+        lift = decoded.lift;
+        sourceInside = true;
+        canonicalSampleCount = decodedSnapshot.sampleCount;
+      }
+    }
+  }
+
+  if (!normalizedUV && attachment) {
+    normalizedUV = clampNormalizedUV(meta, attachment.offsetUV);
+    projectedUV = normalizedUVToProjected(meta, normalizedUV.u, normalizedUV.v);
+    lift = attachment.lift;
+    sourceInside = isUVInsideSurface(meta, projectedUV.u, projectedUV.v);
+  }
+
+  if (!normalizedUV && offset) {
+    const normalizedFromOffset = clampNormalizedUV(meta, convertOffsetToNormalized(meta, offset));
+    normalizedUV = normalizedFromOffset;
+    projectedUV = normalizedUVToProjected(meta, normalizedFromOffset.u, normalizedFromOffset.v);
+    lift = offset.lift;
+    sourceInside = isUVInsideSurface(meta, projectedUV.u, projectedUV.v);
+  }
+
+  if (!normalizedUV || !projectedUV || lift == null || Number.isNaN(lift)) {
+    return null;
+  }
+
+  const resolvedLift = lift;
+
+  const clampedNormalized = clampNormalizedUV(meta, normalizedUV);
+  const clampedProjected = normalizedUVToProjected(meta, clampedNormalized.u, clampedNormalized.v);
+
+  const delta = Math.abs(clampedNormalized.u - normalizedUV.u) + Math.abs(clampedNormalized.v - normalizedUV.v);
+  const clampedInside = isUVInsideSurface(meta, clampedProjected.u, clampedProjected.v);
+
   return {
-    kind: 'surface',
-    baseSurfaceId,
-    offsetUV: clamped,
-    lift,
+    baseSurfaceId: baseSurfaceId!,
+    meta,
+    normalizedUV: clampedNormalized,
+    projectedUV: clampedProjected,
+    lift: resolvedLift,
     yawRel,
-    clampApplied: delta > CLAMP_EPSILON,
-    canonicalSampleCount: options?.canonicalSampleCount,
+    sourceInside: sourceInside || clampedInside || delta <= CLAMP_EPSILON,
+    canonicalSampleCount,
   };
 }
 
-function convertOffsetToUV(meta: SurfaceMeta, offset: DockOffset): { u: number; v: number } {
+function convertOffsetToNormalized(meta: SurfaceMeta, offset: DockOffset): { u: number; v: number } {
   const width = meta.extents.u;
   const depthSpan = meta.extents.v;
   const halfWidth = width / 2;
@@ -197,110 +322,88 @@ function convertOffsetToUV(meta: SurfaceMeta, offset: DockOffset): { u: number; 
   return { u, v };
 }
 
-function planAttachmentForProp(
-  prop: GenericProp,
-  surfaceMap: Record<string, SurfaceMeta | null>,
-): { plan: AttachmentPlan | null; status: DeskSwapAttachmentPreviewStatus; reason?: string; notice?: 'repositioned' } {
-  const attachment = prop.dockAttachment ?? null;
-  const offset = prop.dockOffset ?? null;
-  const propPosition = prop.position as Vec3;
+function buildSurfacePlan(
+  seed: SurfacePlacementSeed,
+  targetSurfaceMap: Record<string, SurfaceMeta | null>,
+): { plan: AttachmentPlanSurface | null; status: DeskSwapAttachmentPreviewStatus; reason?: string; notice?: 'repositioned' } {
+  const preferredMeta = targetSurfaceMap[seed.baseSurfaceId] ?? null;
+  const fallbackInfo = preferredMeta ? null : getPrimaryDeskSurface(targetSurfaceMap);
+  const resolved = preferredMeta ? { baseSurfaceId: seed.baseSurfaceId, meta: preferredMeta } : fallbackInfo;
 
-  const yawRel = attachment?.yawRel ?? offset?.yaw ?? prop.rotation[1] ?? 0;
+  if (!resolved) {
+    return {
+      plan: null,
+      status: 'failed',
+      reason: 'Target desk lacks compatible surface',
+    };
+  }
 
-  if (attachment) {
-    const baseSurfaceId = getBaseSurfaceId(String(attachment.surfaceId));
-    if (baseSurfaceId) {
-      const meta = surfaceMap[baseSurfaceId] ?? null;
-      if (meta) {
-        const canonicalSnapshot = convertToCanonicalSnapshot(attachment.surfaceSnapshot?.canonical);
-        if (canonicalSnapshot) {
-          const decoded = decodeCanonical(meta, canonicalSnapshot, attachment.lift, yawRel);
+  const { meta: targetMetaResolved, baseSurfaceId } = resolved;
+  const sourceNormal = seed.meta.normal;
+  const targetNormal = targetMetaResolved.normal;
+  const dotNormals =
+    sourceNormal && targetNormal
+      ? sourceNormal[0] * targetNormal[0] + sourceNormal[1] * targetNormal[1] + sourceNormal[2] * targetNormal[2]
+      : 1;
 
-          if (decoded) {
-            const plan = createSurfacePlan(baseSurfaceId, meta, decoded.uv, decoded.lift, yawRel, {
-              canonicalSampleCount: canonicalSnapshot.sampleCount,
-            });
-            return {
-              plan,
-              status: plan.clampApplied ? 'clamped' : 'ok',
-              reason: plan.clampApplied ? 'Attachment adjusted to fit new desk bounds' : undefined,
-              notice: plan.clampApplied ? 'repositioned' : undefined,
-            };
-          }
-        }
+  const normalizedUV = clampNormalizedUV(targetMetaResolved, seed.normalizedUV);
+  const projectedUV = normalizedUVToProjected(targetMetaResolved, normalizedUV.u, normalizedUV.v);
+  let clampApplied = Math.abs(normalizedUV.u - seed.normalizedUV.u) + Math.abs(normalizedUV.v - seed.normalizedUV.v) > CLAMP_EPSILON;
 
-        const encoded = encodeCanonical(meta, propPosition, yawRel);
-        if (encoded) {
-          const plan = createSurfacePlan(baseSurfaceId, meta, encoded.uv, encoded.lift, yawRel, {
-            canonicalSampleCount: encoded.snapshot.sampleCount,
-          });
-          return {
-            plan,
-            status: plan.clampApplied ? 'clamped' : 'ok',
-            reason: plan.clampApplied ? 'Attachment adjusted to fit new desk bounds' : undefined,
-            notice: plan.clampApplied ? 'repositioned' : undefined,
-          };
-        }
+  let appliedLift = dotNormals < 0 ? -seed.lift : seed.lift;
+  const candidatePosition = unprojectFromSurface(targetMetaResolved, projectedUV.u, projectedUV.v, appliedLift);
+  if (!candidatePosition) {
+    return {
+      plan: null,
+      status: 'failed',
+      reason: 'Failed to compute placement on target desk',
+    };
+  }
 
-        const projected = projectPointToSurface(meta, propPosition);
-        const uv = projected ? { u: projected.u, v: projected.v } : attachment.offsetUV;
-        const lift = projected ? projected.lift : attachment.lift;
-        const plan = createSurfacePlan(baseSurfaceId, meta, uv, lift, yawRel);
-        return {
-          plan,
-          status: plan.clampApplied ? 'clamped' : 'ok',
-          reason: plan.clampApplied ? 'Attachment adjusted to fit new desk bounds' : undefined,
-          notice: plan.clampApplied ? 'repositioned' : undefined,
-        };
+  const reprojection = projectPointToSurface(targetMetaResolved, candidatePosition);
+  let targetPosition: Vec3 = candidatePosition;
+  if (reprojection) {
+    const liftDelta = Math.abs(reprojection.lift - appliedLift);
+    if (liftDelta > LIFT_EPSILON) {
+      appliedLift = reprojection.lift;
+      const adjusted = unprojectFromSurface(targetMetaResolved, projectedUV.u, projectedUV.v, appliedLift);
+      if (adjusted) {
+        targetPosition = adjusted;
       }
+      clampApplied = true;
+    } else {
+      appliedLift = reprojection.lift;
     }
   }
 
-  const primary = getPrimaryDeskSurface(surfaceMap);
-  if (offset && primary?.meta) {
-    const projected = projectPointToSurface(primary.meta, propPosition);
-    const uv = projected ? { u: projected.u, v: projected.v } : convertOffsetToUV(primary.meta, offset);
-    const lift = projected ? projected.lift : offset.lift;
-    const plan = createSurfacePlan(primary.baseSurfaceId, primary.meta, uv, lift, yawRel);
-    return {
-      plan,
-      status: plan.clampApplied ? 'clamped' : 'ok',
-      reason: plan.clampApplied
-        ? 'Placement adjusted to stay within new desk bounds'
-        : undefined,
-      notice: plan.clampApplied ? 'repositioned' : undefined,
-    };
+  if (!Number.isFinite(appliedLift)) {
+    appliedLift = 0;
   }
 
-  if (offset) {
-    const planMeta = primary?.meta ?? null;
-    const projected = planMeta ? projectPointToSurface(planMeta, propPosition) : null;
-    if (projected && primary) {
-      const plan = createSurfacePlan(primary.baseSurfaceId, primary.meta, { u: projected.u, v: projected.v }, projected.lift, yawRel);
-      return {
-        plan,
-        status: plan.clampApplied ? 'clamped' : 'ok',
-        reason: plan.clampApplied ? 'Placement adjusted to stay within new desk bounds' : undefined,
-        notice: plan.clampApplied ? 'repositioned' : undefined,
-      };
-    }
-
-    return {
-      plan: {
-        kind: 'offset',
-        offset: { ...offset },
-        clampApplied: false,
-      },
-      status: 'ok',
-      reason: undefined,
-      notice: undefined,
-    };
+  const liftAdjustedPosition = unprojectFromSurface(targetMetaResolved, projectedUV.u, projectedUV.v, appliedLift);
+  if (liftAdjustedPosition) {
+    targetPosition = liftAdjustedPosition;
   }
+
+  const targetInside = isUVInsideSurface(targetMetaResolved, projectedUV.u, projectedUV.v);
 
   return {
-    plan: null,
-    status: 'failed',
-    reason: 'No attachment or offset data available',
+    plan: {
+      kind: 'surface',
+      baseSurfaceId,
+      normalizedUV,
+      projectedUV,
+      lift: appliedLift,
+      yawRel: seed.yawRel,
+      clampApplied,
+      targetPosition,
+      sourceInside: seed.sourceInside,
+      targetInside,
+      canonicalSampleCount: seed.canonicalSampleCount,
+    },
+    status: clampApplied ? 'clamped' : 'ok',
+    reason: clampApplied ? 'Placement adjusted to stay within desk bounds' : undefined,
+    notice: clampApplied ? 'repositioned' : undefined,
   };
 }
 
@@ -315,7 +418,7 @@ function realizeAttachmentPlan(
     let surfaceSnapshot;
     if (meta?.shape) {
       let canonicalSnapshot;
-      const projectedUV = normalizedUVToProjected(meta, plan.offsetUV.u, plan.offsetUV.v);
+      const projectedUV = normalizedUVToProjected(meta, plan.normalizedUV.u, plan.normalizedUV.v);
       const candidatePoint = unprojectFromSurface(meta, projectedUV.u, projectedUV.v, plan.lift);
       if (candidatePoint) {
         const canonical = encodeCanonical(meta, candidatePoint, plan.yawRel, {
@@ -348,7 +451,7 @@ function realizeAttachmentPlan(
     const attachment: DockAttachment = {
       deskInstanceId: newDeskId,
       surfaceId,
-      offsetUV: { u: plan.offsetUV.u, v: plan.offsetUV.v },
+      offsetUV: { u: plan.normalizedUV.u, v: plan.normalizedUV.v },
       lift: plan.lift,
       yawRel: plan.yawRel,
       surfaceSnapshot,
@@ -357,8 +460,8 @@ function realizeAttachmentPlan(
     const width = metaExtents?.u ?? 0;
     const depthSpan = metaExtents?.v ?? 0;
     const offset: DockOffset = {
-      lateral: (plan.offsetUV.u - 0.5) * width,
-      depth: (plan.offsetUV.v - 0.5) * depthSpan,
+      lateral: (plan.normalizedUV.u - 0.5) * width,
+      depth: (plan.normalizedUV.v - 0.5) * depthSpan,
       lift: plan.lift,
       yaw: plan.yawRel,
     };
@@ -373,9 +476,9 @@ function realizeAttachmentPlan(
 
 function computeAttachmentPreview(
   props: GenericProp[],
-  targetDeskId: string,
+  targetDesk: GenericProp,
   previewEntry: PropCatalogEntry | null,
-  surfaceMap: Record<string, SurfaceMeta | null>,
+  targetSurfaceMap: Record<string, SurfaceMeta | null>,
 ): DeskSwapAttachmentPreview[] {
   if (!previewEntry) return [];
 
@@ -384,46 +487,75 @@ function computeAttachmentPreview(
   );
 
   const hasSurfaceDefinitions = allowedSurfaces.size > 0;
+  const sourceSurfaceMap = buildSourceSurfaceMap(targetDesk.id);
+  const deskYaw = targetDesk.rotation[1] ?? 0;
 
-  return props
-    .filter((prop) => {
-      if (prop.id === targetDeskId) return false;
-      if (!prop.docked || prop.dockState !== 'attached') return false;
-      if (!prop.dockAttachment && !prop.dockOffset) return false;
-      if (prop.dockAttachment && prop.dockAttachment.deskInstanceId !== targetDeskId) return false;
-      return true;
-    })
-    .map<DeskSwapAttachmentPreview>((prop) => {
-      const label = prop.label ?? prop.catalogId ?? prop.id;
+  const previews: DeskSwapAttachmentPreview[] = [];
 
-      let missingSurface = false;
-      if (hasSurfaceDefinitions && prop.dockAttachment) {
-        const baseSurfaceId = getBaseSurfaceId(String(prop.dockAttachment.surfaceId));
-        if (baseSurfaceId && !allowedSurfaces.has(baseSurfaceId)) {
-          missingSurface = true;
-        }
-      }
+  props.forEach((prop) => {
+    if (prop.id === targetDesk.id) {
+      return;
+    }
 
-      const planned = planAttachmentForProp(prop, surfaceMap);
-      if (missingSurface && planned.plan) {
-        return {
+    const attachmentDeskId = prop.dockAttachment?.deskInstanceId;
+    const isAttachedToDesk = attachmentDeskId === targetDesk.id && prop.dockState === 'attached';
+
+    const seed = resolveSourcePlacement(prop, sourceSurfaceMap, deskYaw);
+    if (!seed) {
+      if (isAttachedToDesk) {
+        previews.push({
           propId: prop.id,
-          label,
-          status: 'clamped',
-          reason: planned.reason ?? 'Remapped to closest surface on new desk',
-          notice: 'repositioned',
-          plan: planned.plan,
-        };
+          label: prop.label ?? prop.catalogId ?? prop.id,
+          status: 'failed',
+          reason: 'Unable to resolve placement on current desk',
+        });
       }
-      return {
+      return;
+    }
+
+    const shouldInclude = isAttachedToDesk || seed.sourceInside;
+    if (!shouldInclude) {
+      return;
+    }
+
+    const planned = buildSurfacePlan(seed, targetSurfaceMap);
+    const label = prop.label ?? prop.catalogId ?? prop.id;
+
+    if (!planned.plan) {
+      previews.push({
         propId: prop.id,
         label,
         status: planned.status,
-        reason: planned.reason ?? (missingSurface ? 'New desk lacks matching surface' : undefined),
-        notice: planned.notice ?? (missingSurface ? 'repositioned' : undefined),
-        plan: planned.plan,
-      };
+        reason: planned.reason,
+      });
+      return;
+    }
+
+    let missingSurface = false;
+    if (hasSurfaceDefinitions && prop.dockAttachment) {
+      const baseSurfaceId = getBaseSurfaceId(String(prop.dockAttachment.surfaceId));
+      if (baseSurfaceId && !allowedSurfaces.has(baseSurfaceId)) {
+        missingSurface = true;
+      }
+    }
+
+    const status = missingSurface && planned.status === 'ok' ? 'clamped' : planned.status;
+    const reason = missingSurface
+      ? planned.reason ?? 'Remapped to closest surface on new desk'
+      : planned.reason;
+    const notice = missingSurface ? 'repositioned' : planned.notice;
+
+    previews.push({
+      propId: prop.id,
+      label,
+      status,
+      reason,
+      notice,
+      plan: planned.plan,
     });
+  });
+
+  return previews;
 }
 
 function remapAttachmentDeskId(attachment: DockAttachment | undefined, nextDeskId: string): DockAttachment | undefined {
@@ -442,38 +574,51 @@ function remapAttachmentDeskId(attachment: DockAttachment | undefined, nextDeskI
 
 function buildFallbackReview(
   props: GenericProp[],
-  deskId: string,
-  entry: PropCatalogEntry,
+  desk: GenericProp,
   reason: string,
 ): DeskSwapAttachmentPreview[] {
-  const emptySurfaces: Record<string, SurfaceMeta | null> = {};
-  return props
-    .filter((prop) => {
-      if (prop.id === deskId) return false;
-      if (!prop.docked || prop.dockState !== 'attached') return false;
-      if (prop.dockAttachment && prop.dockAttachment.deskInstanceId !== deskId) return false;
-      return true;
-    })
-    .map((prop) => {
-      const planned = planAttachmentForProp(prop, emptySurfaces);
-      const label = prop.label ?? prop.catalogId ?? prop.id;
-      if (planned.plan && planned.status !== 'failed') {
-        return {
-          propId: prop.id,
-          label,
-          status: planned.status,
-          reason: planned.reason ?? reason,
-          notice: planned.notice,
-          plan: planned.plan,
-        };
-      }
-      return {
+  const sourceSurfaceMap = buildSourceSurfaceMap(desk.id);
+  const deskYaw = desk.rotation[1] ?? 0;
+
+  const previews: DeskSwapAttachmentPreview[] = [];
+
+  props.forEach((prop) => {
+    if (prop.id === desk.id) return;
+    if (prop.dockAttachment?.deskInstanceId !== desk.id || prop.dockState !== 'attached') return;
+
+    const seed = resolveSourcePlacement(prop, sourceSurfaceMap, deskYaw);
+    if (!seed) {
+      previews.push({
         propId: prop.id,
-        label,
-        status: 'failed' as const,
+        label: prop.label ?? prop.catalogId ?? prop.id,
+        status: 'failed',
         reason,
-      };
+      });
+      return;
+    }
+
+    previews.push({
+      propId: prop.id,
+      label: prop.label ?? prop.catalogId ?? prop.id,
+      status: 'failed',
+      reason,
+      plan: {
+        kind: 'surface',
+        baseSurfaceId: seed.baseSurfaceId,
+        normalizedUV: seed.normalizedUV,
+        projectedUV: seed.projectedUV,
+        lift: seed.lift,
+        yawRel: seed.yawRel,
+        clampApplied: false,
+        targetPosition: prop.position as Vec3,
+        sourceInside: seed.sourceInside,
+        targetInside: false,
+        canonicalSampleCount: seed.canonicalSampleCount,
+      },
     });
+  });
+
+  return previews;
 }
 
 export const useDeskSwapStore = create<DeskSwapState>((set, get) => ({
@@ -509,9 +654,29 @@ export const useDeskSwapStore = create<DeskSwapState>((set, get) => ({
 
     let attachments: DeskSwapAttachmentPreview[] | null = null;
     if (preview && preview.catalogId === entry.id) {
-      attachments = computeAttachmentPreview(propsSnapshot, targetDeskId, entry, preview.surfaces);
+      attachments = computeAttachmentPreview(propsSnapshot, oldDesk, entry, preview.surfaces);
     } else {
-      attachments = buildFallbackReview(propsSnapshot, targetDeskId, entry, 'Swap preview unavailable');
+      attachments = buildFallbackReview(propsSnapshot, oldDesk, 'Swap preview unavailable');
+    }
+
+    const surfacesReady = Object.values(surfaceMap).some((meta) => !!meta);
+    const remappableProps = propsSnapshot.filter((prop) => {
+      if (prop.id === oldDesk.id) return false;
+      const attachedToDesk = prop.dockAttachment?.deskInstanceId === oldDesk.id && prop.dockState === 'attached';
+      const hasOffset = !!prop.dockOffset && prop.dockState === 'attached';
+      return attachedToDesk || hasOffset;
+    });
+
+    if (!surfacesReady && remappableProps.length > 0) {
+      const loadingAttachments: DeskSwapAttachmentPreview[] = remappableProps.map((prop) => ({
+        propId: prop.id,
+        label: prop.label ?? prop.catalogId ?? prop.id,
+        status: 'failed',
+        reason: 'Desk surfaces are still loading. Please wait for the preview to finish before completing the swap.',
+      }));
+      setSelection(null);
+      set({ pendingReview: { entry, attachments: loadingAttachments } });
+      return false;
     }
 
     const failedAttachments = attachments.filter((attachment) => attachment.status === 'failed');
@@ -530,11 +695,15 @@ export const useDeskSwapStore = create<DeskSwapState>((set, get) => ({
 
     const attachmentRecords: DeskSwapAttachmentSnapshot[] = [];
 
-    const affectedProps = propsSnapshot.filter((prop) => {
-      if (prop.id === oldDesk.id) return false;
-      if (!prop.dockAttachment) return false;
-      return prop.dockAttachment.deskInstanceId === oldDesk.id && prop.dockState === 'attached';
-    });
+    const planByPropId = new Map<string, AttachmentPlan>();
+    const hasTargetSurfaces = Object.keys(surfaceMap).length > 0;
+    if (hasTargetSurfaces) {
+      attachments.forEach((preview) => {
+        if (preview.plan && preview.status !== 'failed') {
+          planByPropId.set(preview.propId, preview.plan);
+        }
+      });
+    }
 
     const oldCatalogEntry = oldDesk.catalogId
       ? PROP_CATALOG.find((item) => item.id === oldDesk.catalogId)
@@ -559,39 +728,68 @@ export const useDeskSwapStore = create<DeskSwapState>((set, get) => ({
     setGenericPropStatus(newDeskProp.id, 'placed');
     setGenericPropLocked(newDeskProp.id, oldDesk.locked);
 
-    affectedProps.forEach((prop) => {
+    const targetedProps = propsSnapshot.filter((prop) => planByPropId.has(prop.id));
+    const fallbackProps = propsSnapshot.filter((prop) => {
+      if (planByPropId.has(prop.id)) return false;
+      if (prop.id === oldDesk.id) return false;
+      if (!prop.dockAttachment) return false;
+      return prop.dockAttachment.deskInstanceId === oldDesk.id && prop.dockState === 'attached';
+    });
+
+    const newDeskState = getGenericProp(newDeskProp.id) ?? newDeskProp;
+    const newDeskYaw = newDeskState.rotation[1] ?? 0;
+
+    targetedProps.forEach((prop) => {
+      const plan = planByPropId.get(prop.id);
+      if (!plan) {
+        return;
+      }
+
       const beforeAttachment = cloneAttachment(prop.dockAttachment);
       const beforeOffset = cloneOffset(prop.dockOffset);
       const beforeState: DockState = prop.dockState;
+      const beforePosition: Vec3 = [prop.position[0], prop.position[1], prop.position[2]];
+      const beforeRotation: Vec3 = [prop.rotation[0], prop.rotation[1], prop.rotation[2]];
+      const beforeSnapshot = createSnapshotFromProp(prop);
 
-      const previewInfo = attachments?.find((item) => item.propId === prop.id) ?? null;
-      const planned = previewInfo?.plan ?? planAttachmentForProp(prop, surfaceMap).plan ?? null;
       let appliedAttachment: DockAttachment | undefined;
       let appliedOffset: DockOffset | undefined;
 
-      if (planned) {
-        const realized = realizeAttachmentPlan(planned, newDeskProp.id, surfaceMap);
+      if (plan.kind === 'surface') {
+        if (prop.docked) {
+          const realized = realizeAttachmentPlan(plan, newDeskProp.id, surfaceMap);
+          appliedAttachment = realized.attachment;
+          appliedOffset = realized.offset;
+          if (appliedAttachment) {
+            dockPropWithAttachment(prop.id, appliedAttachment);
+          }
+          if (appliedOffset) {
+            if (!appliedAttachment) {
+              dockPropWithOffset(prop.id, appliedOffset);
+              setDockAttachment(prop.id, undefined);
+            }
+            setDockOffset(prop.id, appliedOffset);
+          }
+        } else {
+          undockProp(prop.id);
+        }
+
+        if (plan.targetPosition) {
+          setGenericPropPosition(prop.id, plan.targetPosition);
+        }
+
+        const baseRotation: Vec3 = (getGenericProp(prop.id)?.rotation ?? prop.rotation) as Vec3;
+        const yaw = normalizeAngle(newDeskYaw + plan.yawRel);
+        setGenericPropRotation(prop.id, [baseRotation[0], yaw, baseRotation[2]]);
+      } else {
+        const realized = realizeAttachmentPlan(plan, newDeskProp.id, surfaceMap);
         appliedAttachment = realized.attachment;
         appliedOffset = realized.offset;
-
         if (appliedAttachment) {
           dockPropWithAttachment(prop.id, appliedAttachment);
         }
         if (appliedOffset) {
-          if (!appliedAttachment) {
-            dockPropWithOffset(prop.id, appliedOffset);
-            setDockAttachment(prop.id, undefined);
-          }
-          setDockOffset(prop.id, appliedOffset);
-        }
-      } else {
-        const fallbackAttachment = remapAttachmentDeskId(beforeAttachment, newDeskProp.id);
-        if (fallbackAttachment) {
-          appliedAttachment = fallbackAttachment;
-          dockPropWithAttachment(prop.id, fallbackAttachment);
-        } else if (beforeOffset) {
-          appliedOffset = beforeOffset;
-          dockPropWithOffset(prop.id, beforeOffset);
+          dockPropWithOffset(prop.id, appliedOffset);
           setDockAttachment(prop.id, undefined);
         }
       }
@@ -599,15 +797,80 @@ export const useDeskSwapStore = create<DeskSwapState>((set, get) => ({
       const propAfter = getGenericProp(prop.id);
       const afterAttachment = cloneAttachment(propAfter?.dockAttachment);
       const afterOffset = cloneOffset(propAfter?.dockOffset);
-      const afterState: DockState = propAfter?.dockState ?? 'attached';
+      const afterState: DockState = propAfter?.dockState ?? prop.dockState;
+      const afterPosition: Vec3 = propAfter
+        ? ([propAfter.position[0], propAfter.position[1], propAfter.position[2]] as Vec3)
+        : beforePosition;
+      const afterRotation: Vec3 = propAfter
+        ? ([propAfter.rotation[0], propAfter.rotation[1], propAfter.rotation[2]] as Vec3)
+        : beforeRotation;
+      const afterSnapshot = propAfter ? createSnapshotFromProp(propAfter) : beforeSnapshot;
 
       attachmentRecords.push({
         propId: prop.id,
+        beforeSnapshot,
+        afterSnapshot,
         beforeDocked: prop.docked,
+        beforePosition,
+        beforeRotation,
         beforeAttachment,
         beforeOffset,
         beforeState,
-        afterDocked: true,
+        afterDocked: propAfter?.docked ?? prop.docked,
+        afterPosition,
+        afterRotation,
+        afterAttachment,
+        afterOffset,
+        afterState,
+      });
+    });
+
+    fallbackProps.forEach((prop) => {
+      const beforeAttachment = cloneAttachment(prop.dockAttachment);
+      const beforeOffset = cloneOffset(prop.dockOffset);
+      const beforeState: DockState = prop.dockState;
+      const beforePosition: Vec3 = [prop.position[0], prop.position[1], prop.position[2]];
+      const beforeRotation: Vec3 = [prop.rotation[0], prop.rotation[1], prop.rotation[2]];
+      const beforeSnapshot = createSnapshotFromProp(prop);
+
+      let appliedAttachment: DockAttachment | undefined;
+      let appliedOffset: DockOffset | undefined;
+
+      const fallbackAttachment = remapAttachmentDeskId(beforeAttachment, newDeskProp.id);
+      if (fallbackAttachment) {
+        appliedAttachment = fallbackAttachment;
+        dockPropWithAttachment(prop.id, fallbackAttachment);
+      } else if (beforeOffset) {
+        appliedOffset = beforeOffset;
+        dockPropWithOffset(prop.id, beforeOffset);
+        setDockAttachment(prop.id, undefined);
+      }
+
+      const propAfter = getGenericProp(prop.id);
+      const afterAttachment = cloneAttachment(propAfter?.dockAttachment);
+      const afterOffset = cloneOffset(propAfter?.dockOffset);
+      const afterState: DockState = propAfter?.dockState ?? prop.dockState;
+      const afterPosition: Vec3 = propAfter
+        ? ([propAfter.position[0], propAfter.position[1], propAfter.position[2]] as Vec3)
+        : beforePosition;
+      const afterRotation: Vec3 = propAfter
+        ? ([propAfter.rotation[0], propAfter.rotation[1], propAfter.rotation[2]] as Vec3)
+        : beforeRotation;
+      const afterSnapshot = propAfter ? createSnapshotFromProp(propAfter) : beforeSnapshot;
+
+      attachmentRecords.push({
+        propId: prop.id,
+        beforeSnapshot,
+        afterSnapshot,
+        beforeDocked: prop.docked,
+        beforePosition,
+        beforeRotation,
+        beforeAttachment,
+        beforeOffset,
+        beforeState,
+        afterDocked: propAfter?.docked ?? prop.docked,
+        afterPosition,
+        afterRotation,
         afterAttachment,
         afterOffset,
         afterState,
@@ -659,7 +922,11 @@ export const useDeskSwapStore = create<DeskSwapState>((set, get) => ({
     });
 
     const props = getGenericPropsSnapshot();
-    const attachments = computeAttachmentPreview(props, targetDeskId, previewEntry, surfaceMap);
+    const targetDesk = getGenericProp(targetDeskId);
+    if (!targetDesk) {
+      return;
+    }
+    const attachments = computeAttachmentPreview(props, targetDesk, previewEntry, surfaceMap);
 
     set({
       previewAnalysis: {

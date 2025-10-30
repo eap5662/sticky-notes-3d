@@ -1,4 +1,5 @@
 import type { SurfaceMeta } from '@/state/surfaceMetaStore';
+import { getSurfaceShapeInfo } from '@/canvas/math/surfaceFrame';
 
 export type CanonicalSampler = {
   sampleCount: number;
@@ -11,11 +12,12 @@ export const DEFAULT_CANONICAL_SAMPLE_COUNT = 64;
 const LENGTH_EPS = 1e-6;
 
 function normalizePoints(meta: SurfaceMeta): Array<[number, number]> | null {
-  if (!meta.shape) {
+  const shapeInfo = getSurfaceShapeInfo(meta);
+  if (!shapeInfo) {
     return null;
   }
 
-  if (meta.shape.type === 'rect') {
+  if (shapeInfo.type === 'rect') {
     return [
       [0, 0],
       [1, 0],
@@ -24,24 +26,15 @@ function normalizePoints(meta: SurfaceMeta): Array<[number, number]> | null {
     ];
   }
 
-  if (meta.shape.type !== 'polygon') {
+  const usable = shapeInfo.normalizedPoints.length > 1
+    ? shapeInfo.normalizedPoints.slice(0, shapeInfo.normalizedPoints.length - 1)
+    : shapeInfo.normalizedPoints.slice();
+
+  if (usable.length < 3) {
     return null;
   }
 
-  const { points } = meta.shape;
-  if (points.length < 4) {
-    return null;
-  }
-
-  const width = meta.extents.u || 1;
-  const depth = meta.extents.v || 1;
-
-  const normalized: Array<[number, number]> = [];
-  for (const [u, v] of points) {
-    normalized.push([width !== 0 ? u / width : u, depth !== 0 ? v / depth : v]);
-  }
-
-  return normalized;
+  return usable.map(([u, v]) => [u, v]);
 }
 
 function ensureClosed(points: Array<[number, number]>): Array<[number, number]> {

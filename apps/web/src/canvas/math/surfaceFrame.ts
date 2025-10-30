@@ -178,7 +178,7 @@ function ensureClosed(points: Array<[number, number]>, eps = 1e-6) {
   return points;
 }
 
-function mapProjectedToNormalized(value: number, range: Range) {
+export function mapProjectedToNormalized(value: number, range: Range) {
   const span = range.max - range.min;
   if (Math.abs(span) < 1e-8) {
     return 0;
@@ -186,7 +186,7 @@ function mapProjectedToNormalized(value: number, range: Range) {
   return (value - range.min) / span;
 }
 
-function mapNormalizedToProjected(value: number, range: Range) {
+export function mapNormalizedToProjected(value: number, range: Range) {
   const span = range.max - range.min;
   if (Math.abs(span) < 1e-8) {
     return range.min;
@@ -295,6 +295,17 @@ export function getSurfaceShapeInfo(meta: SurfaceMeta | null): SurfaceShapeInfo 
   return getSurfaceShape(meta);
 }
 
+export function projectedUVToNormalized(meta: SurfaceMeta | null, u: number, v: number): { u: number; v: number } {
+  const shape = getSurfaceShape(meta);
+  if (!shape || shape.type === 'rect') {
+    return { u, v };
+  }
+  return {
+    u: mapProjectedToNormalized(u, shape.projectedURange),
+    v: mapProjectedToNormalized(v, shape.projectedVRange),
+  };
+}
+
 export function normalizedUVToProjected(meta: SurfaceMeta | null, u: number, v: number): { u: number; v: number } {
   const shape = getSurfaceShape(meta);
   if (!shape || shape.type === 'rect') {
@@ -307,6 +318,11 @@ export function normalizedUVToProjected(meta: SurfaceMeta | null, u: number, v: 
     u: mapNormalizedToProjected(u, shape.projectedURange),
     v: mapNormalizedToProjected(v, shape.projectedVRange),
   };
+}
+
+export function clampNormalizedUV(meta: SurfaceMeta | null, uv: { u: number; v: number }): { u: number; v: number } {
+  const projected = normalizedUVToProjected(meta, uv.u, uv.v);
+  return clampUVToShape(meta, projected.u, projected.v);
 }
 
 export function clampUVToShape(meta: SurfaceMeta | null, u: number, v: number): { u: number; v: number } {
@@ -430,5 +446,29 @@ export function getSurfaceSpawnPoint(
   return {
     position,
     uv: [clamped.u, clamped.v],
+  };
+}
+
+export type NormalizedSurfacePlacement = {
+  normalizedUV: { u: number; v: number };
+  projectedUV: { u: number; v: number };
+  lift: number;
+};
+
+export function projectPointToNormalized(meta: SurfaceMeta | null, point: Vec3): (NormalizedSurfacePlacement & { inside: boolean }) | null {
+  const projection = projectPointToSurface(meta, point);
+  if (!projection) {
+    return null;
+  }
+
+  const projectedUV = { u: projection.u, v: projection.v };
+  const normalizedUV = projectedUVToNormalized(meta, projection.u, projection.v);
+  const inside = isUVInsideSurface(meta, projection.u, projection.v);
+
+  return {
+    normalizedUV,
+    projectedUV,
+    lift: projection.lift,
+    inside,
   };
 }

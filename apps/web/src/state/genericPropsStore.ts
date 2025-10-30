@@ -11,6 +11,23 @@ export type GenericPropBounds = {
   max: Vec3;
 };
 
+export type GenericPropSnapshot = {
+  id: string;
+  catalogId: string;
+  label?: string;
+  url: string;
+  anchor?: AnchorConfig;
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  status: GenericPropStatus;
+  docked: boolean;
+  locked: boolean;
+  dockOffset?: DockOffset;
+  dockState: DockState;
+  dockAttachment?: DockAttachment;
+};
+
 export type DockOffset = {
   lateral: number;  // offset along desk.right axis (meters)
   depth: number;    // offset along desk.forward axis (meters)
@@ -136,6 +153,46 @@ function cloneDockAttachmentInternal(attachment: DockAttachment): DockAttachment
           }
       : undefined,
   };
+}
+
+export function createSnapshotFromProp(prop: GenericProp): GenericPropSnapshot {
+  return {
+    id: prop.id,
+    catalogId: prop.catalogId ?? '',
+    label: prop.label,
+    url: prop.url,
+    anchor: prop.anchor,
+    position: [prop.position[0], prop.position[1], prop.position[2]],
+    rotation: [prop.rotation[0], prop.rotation[1], prop.rotation[2]],
+    scale: [prop.scale[0], prop.scale[1], prop.scale[2]],
+    status: prop.status,
+    docked: prop.docked,
+    locked: prop.locked,
+    dockOffset: prop.dockOffset ? { ...prop.dockOffset } : undefined,
+    dockState: prop.dockState,
+    dockAttachment: prop.dockAttachment ? cloneDockAttachmentInternal(prop.dockAttachment) : undefined,
+  };
+}
+
+export function applySnapshotToProp(snapshot: GenericPropSnapshot) {
+  updateProp(snapshot.id, (prop) => {
+    return {
+      ...prop,
+      catalogId: snapshot.catalogId,
+      label: snapshot.label,
+      url: snapshot.url,
+      anchor: snapshot.anchor,
+      position: [snapshot.position[0], snapshot.position[1], snapshot.position[2]],
+      rotation: [snapshot.rotation[0], snapshot.rotation[1], snapshot.rotation[2]],
+      scale: [snapshot.scale[0], snapshot.scale[1], snapshot.scale[2]],
+      status: snapshot.status,
+      docked: snapshot.docked,
+      locked: snapshot.locked,
+      dockOffset: snapshot.dockOffset ? { ...snapshot.dockOffset } : undefined,
+      dockState: snapshot.dockState,
+      dockAttachment: snapshot.dockAttachment ? cloneDockAttachmentInternal(snapshot.dockAttachment) : undefined,
+    };
+  });
 }
 
 function emit(next: GenericProp[]) {

@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useUndoHistoryStore, type UndoAction } from '@/state/undoHistoryStore';
+import { useUndoHistoryStore, type UndoAction, type GenericPropSnapshot } from '@/state/undoHistoryStore';
 import { useUndoToastStore } from '@/state/undoToastStore';
 import {
   spawnGenericProp,
@@ -14,6 +14,7 @@ import {
   setDockAttachment,
   setDockState,
   undockProp,
+  applySnapshotToProp,
   type DockAttachment,
 } from '@/state/genericPropsStore';
 import { setSelection } from '@/state/selectionStore';
@@ -70,6 +71,21 @@ function remapAttachmentDeskId(attachment: DockAttachment | undefined, nextDeskI
   return cloned;
 }
 
+function remapSnapshotDeskId(snapshot: GenericPropSnapshot, nextDeskId: string): GenericPropSnapshot {
+  if (!snapshot.dockAttachment) {
+    return { ...snapshot };
+  }
+  const remappedAttachment = remapAttachmentDeskId(snapshot.dockAttachment, nextDeskId);
+  return {
+    ...snapshot,
+    dockAttachment: remappedAttachment,
+  };
+}
+
+function applyGenericSnapshot(snapshot: GenericPropSnapshot) {
+  applySnapshotToProp(snapshot);
+}
+
 function getActionLabel(action: UndoAction): string {
   switch (action.type) {
     case 'spawn':
@@ -115,21 +131,7 @@ function executeUndo(action: UndoAction) {
         locked: snapshot.locked,
       });
 
-      // Restore scale, dock state after spawn
-      setGenericPropUniformScale(restored.id, snapshot.scale[0]);
-      setGenericPropLocked(restored.id, snapshot.locked);
-      if (snapshot.docked && snapshot.dockOffset) {
-        dockPropWithOffset(restored.id, snapshot.dockOffset);
-      }
-      if (snapshot.dockAttachment) {
-        dockPropWithAttachment(restored.id, snapshot.dockAttachment);
-      }
-      if (snapshot.dockState) {
-        setDockState(restored.id, snapshot.dockState);
-      }
-      if (!snapshot.dockAttachment) {
-        setDockAttachment(restored.id, undefined);
-      }
+      applySnapshotToProp({ ...snapshot, id: restored.id });
       break;
     }
 
@@ -206,19 +208,8 @@ function executeUndo(action: UndoAction) {
       setGenericPropLocked(restoredDesk.id, oldDesk.locked);
 
       attachments.forEach((record) => {
-        if (record.beforeDocked) {
-          const attachment = remapAttachmentDeskId(record.beforeAttachment, restoredDesk.id);
-          if (attachment) {
-            dockPropWithAttachment(record.propId, attachment);
-          } else if (record.beforeOffset) {
-            dockPropWithOffset(record.propId, record.beforeOffset);
-          }
-          setDockState(record.propId, record.beforeState);
-        } else {
-          undockProp(record.propId);
-          setDockAttachment(record.propId, undefined);
-          setDockState(record.propId, record.beforeState);
-        }
+        const remapped = remapSnapshotDeskId(record.beforeSnapshot, restoredDesk.id);
+        applyGenericSnapshot(remapped);
       });
 
       setSelection({ kind: 'generic', id: restoredDesk.id });
