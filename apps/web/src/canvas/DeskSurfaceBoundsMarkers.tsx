@@ -8,6 +8,7 @@ import { useGenericProps } from '@/canvas/hooks/useGenericProps';
 import type { SurfaceMeta } from '@/state/surfaceMetaStore';
 import { PROP_CATALOG } from '@/data/propCatalog';
 import type { AnchorConfig } from '@/canvas/props/GLTFProp';
+import { getSurfaceShapeInfo, unprojectFromSurface, type SurfaceShapeInfo } from '@/canvas/math/surfaceFrame';
 
 const COLORS = [
   '#ff0000', // Red
@@ -28,48 +29,35 @@ const VERTEX_DECIMATION = 10; // Only show every Nth vertex (1 = all, 10 = every
  * but we need normalized 0-1 coefficients for the geometry. We scale the geometry
  * by extents during rendering, so vertices should be normalized here.
  */
-function createShapeGeometry(meta: SurfaceMeta): THREE.BufferGeometry {
+function createShapeGeometry(meta: SurfaceMeta, shapeInfo: SurfaceShapeInfo | null): THREE.BufferGeometry {
   console.log('[createShapeGeometry] Called with meta.shape:', meta.shape);
 
-  if (!meta.shape || meta.shape.type === 'rect') {
+  if (!meta.shape || meta.shape.type === 'rect' || !shapeInfo || shapeInfo.type === 'rect') {
     console.log('[createShapeGeometry] Using PlaneGeometry for rect:', meta.extents);
     // Fallback to plane geometry for rect
     return new THREE.PlaneGeometry(meta.extents.u, meta.extents.v);
   }
 
-  if (meta.shape.type === 'polygon') {
-    const { points } = meta.shape;
-    console.log('[createShapeGeometry] Creating polygon geometry with points:', points);
-    console.log('[createShapeGeometry] Extents for normalization:', meta.extents);
+  if (meta.shape.type === 'polygon' && shapeInfo.type === 'polygon') {
+    const rawRing = shapeInfo.rawPoints;
+    console.log('[createShapeGeometry] Creating polygon geometry with raw points:', rawRing);
 
-    // Normalize points by extents (convert meters to 0-1 coefficients)
-    // Points are currently in world-space meters, need to divide by axis lengths
-    const normalizedPoints = points.map(([u, v]) => [
-      u / meta.extents.u,
-      v / meta.extents.v,
-    ] as [number, number]);
-
-    console.log('[createShapeGeometry] Sample normalized points:', normalizedPoints.slice(0, 3));
-
-    // Flatten normalized points for earcut
-    const vertices: number[] = [];
-    for (const [u, v] of normalizedPoints) {
-      vertices.push(u, v);
+    // Earcut expects polygons without duplicated closing vertex
+    const usableCount = rawRing.length > 1 ? rawRing.length - 1 : rawRing.length;
+    const flat: number[] = [];
+    const positions: number[] = [];
+    for (let i = 0; i < usableCount; i += 1) {
+      const [u, v] = rawRing[i];
+      const localU = u * shapeInfo.uOrientation;
+      const localV = v * shapeInfo.vOrientation;
+      flat.push(localU, localV);
+      positions.push(localU, localV, 0);
     }
 
-    // Triangulate using earcut
-    const indices = earcut(vertices);
+    const indices = earcut(flat);
     console.log('[createShapeGeometry] Earcut produced indices:', indices.length, 'triangles:', indices.length / 3);
 
-    // Create BufferGeometry
     const geometry = new THREE.BufferGeometry();
-
-    // Convert 2D UV points to 3D positions (in local UV space, normalized 0-1)
-    const positions: number[] = [];
-    for (const [u, v] of normalizedPoints) {
-      positions.push(u, v, 0); // Z=0 in local UV plane
-    }
-
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
@@ -78,8 +66,7 @@ function createShapeGeometry(meta: SurfaceMeta): THREE.BufferGeometry {
     return geometry;
   }
 
-  // Fallback
-  console.log('[createShapeGeometry] Fallback to rect');
+  console.log('[createShapeGeometry] Fallback to rect (unexpected)');
   return new THREE.PlaneGeometry(meta.extents.u, meta.extents.v);
 }
 
@@ -124,58 +111,28 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
   const url = deskProp?.url || '/models/Tan-Desk.glb'; // Fallback to avoid empty string
   const gltf = useGLTF(url);
 
+  const shapeInfo = useMemo(() => getSurfaceShapeInfo(meta), [meta]);
+
   const points = useMemo(() => {
     if (!deskProp) return null;
+    if (!shapeInfo) return null;
 
-    const { origin, uAxis, vAxis, shape } = meta;
+    const ring = shapeInfo.normalizedPoints;
+    const normal = new THREE.Vector3(...meta.normal).normalize().multiplyScalar(0.02);
 
-    if (!origin || !uAxis || !vAxis || !shape) {
-      console.warn(`[BoundsMarker] Missing data for ${label}`, { origin, uAxis, vAxis, shape });
-      return null;
-    }
-
-    // Build the corner points in GLTF-local space first
-    let corners: THREE.Vector3[] = [];
-
-    if (shape.type === 'rect') {
-      corners = [
-        new THREE.Vector3(origin[0], origin[1], origin[2]),
-        new THREE.Vector3(origin[0] + uAxis[0], origin[1] + uAxis[1], origin[2] + uAxis[2]),
-        new THREE.Vector3(origin[0] + uAxis[0] + vAxis[0], origin[1] + uAxis[1] + vAxis[1], origin[2] + uAxis[2] + vAxis[2]),
-        new THREE.Vector3(origin[0] + vAxis[0], origin[1] + vAxis[1], origin[2] + vAxis[2]),
-        new THREE.Vector3(origin[0], origin[1], origin[2]),
-      ];
-    } else if (shape.type === 'polygon') {
-      const { points: points2D } = shape;
-      if (!points2D || points2D.length === 0) {
-        console.warn(`[BoundsMarker] Empty polygon for ${label}`);
+    const worldPoints: THREE.Vector3[] = [];
+    for (const [nu, nv] of ring) {
+      const world = unprojectFromSurface(meta, nu, nv, 0);
+      if (!world) {
         return null;
       }
-      console.log('[BoundsMarker] Polygon points:', {
-        points: points2D.slice(0, 3),
-        origin,
-        uAxis,
-        vAxis,
-        extents: meta.extents
-      });
-
-      // IMPORTANT: Polygon points are in world-space meters from polygon extraction,
-      // but uAxis/vAxis are full-length vectors (not unit vectors).
-      // We need to normalize the points by dividing by extents to get 0-1 coefficients.
-      corners = points2D.map(([u, v]) => {
-        const uCoeff = u / meta.extents.u;  // Normalize to 0-1 range
-        const vCoeff = v / meta.extents.v;
-        return new THREE.Vector3(
-          origin[0] + uAxis[0] * uCoeff + vAxis[0] * vCoeff,
-          origin[1] + uAxis[1] * uCoeff + vAxis[1] * vCoeff,
-          origin[2] + uAxis[2] * uCoeff + vAxis[2] * vCoeff,
-        );
-      });
-      corners.push(corners[0].clone());
+      const vector = new THREE.Vector3(world[0], world[1], world[2]);
+      vector.add(normal);
+      worldPoints.push(vector);
     }
 
-    return corners.length > 0 ? corners : null;
-  }, [meta, label, deskProp]);
+    return worldPoints.length > 0 ? worldPoints : null;
+  }, [deskProp, meta, shapeInfo]);
 
   const rotation = useMemo(() => {
     if (!meta.uDir || !meta.vDir || !meta.normal) return new THREE.Euler(0, 0, 0);
@@ -223,31 +180,25 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
     if (!points || points.length < 4) return null;
 
     const lift = 0.02; // 2cm lift for visibility
-    const normal = new THREE.Vector3(...meta.normal);
+    const normal = new THREE.Vector3(...meta.normal).normalize();
 
-    if (meta.shape?.type === 'polygon') {
-      // Polygon geometry vertices are in UV space: (u, v, 0)
-      // We need to position at origin and apply rotation that maps UV axes to world uAxis/vAxis.
-      // Origin/uAxis/vAxis are already in world space from surfaceAdapter.
+    if (shapeInfo?.type === 'polygon') {
       const origin = new THREE.Vector3(...(meta.origin || meta.center));
-      origin.add(normal.clone().multiplyScalar(lift)); // Lift up
-
-      // Use the same rotation as the outline (computed from corners)
+      origin.add(normal.clone().multiplyScalar(lift));
       return {
         position: [origin.x, origin.y, origin.z] as [number, number, number],
         rotation,
       };
-    } else {
-      // Rect: PlaneGeometry is centered at origin, so position at center
-      const center = new THREE.Vector3(...meta.center);
-      center.add(normal.clone().multiplyScalar(lift));
-
-      return {
-        position: [center.x, center.y, center.z] as [number, number, number],
-        rotation,
-      };
     }
-  }, [meta.origin, meta.center, meta.normal, meta.shape, points, rotation]);
+
+    const center = new THREE.Vector3(...meta.center);
+    center.add(normal.clone().multiplyScalar(lift));
+
+    return {
+      position: [center.x, center.y, center.z] as [number, number, number],
+      rotation,
+    };
+  }, [meta.origin, meta.center, meta.normal, points, rotation, shapeInfo]);
 
   const shapeGeometry = useMemo(() => {
     console.log('[DeskSurfaceBoundsMarkers] Creating geometry for shape:', {
@@ -255,8 +206,8 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
       points: meta.shape?.type === 'polygon' ? meta.shape.points.length : 'N/A',
       extents: meta.extents,
     });
-    return createShapeGeometry(meta);
-  }, [meta.shape, meta.extents]);
+    return createShapeGeometry(meta, shapeInfo);
+  }, [meta, shapeInfo]);
 
   if (!points || !shapeTransform) {
     return null;
@@ -272,13 +223,7 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
         raycast={() => null}
       />
       {/* Add a semi-transparent fill to visualize the surface area, lifted up slightly */}
-      <mesh
-        position={shapeTransform.position}
-        rotation={shapeTransform.rotation}
-        scale={meta.shape?.type === 'polygon' ? [meta.extents.u, meta.extents.v, 1] : 1}
-        geometry={shapeGeometry}
-        raycast={() => null}
-      >
+      <mesh position={shapeTransform.position} rotation={shapeTransform.rotation} geometry={shapeGeometry} raycast={() => null}>
         <meshBasicMaterial
           color={color}
           transparent

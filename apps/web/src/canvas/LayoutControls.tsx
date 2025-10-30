@@ -21,7 +21,7 @@ import { useSurface, useSurfaceMeta, useSurfacesByKind } from "@/canvas/hooks/us
 import { getDeskBounds } from "@/state/deskBoundsStore";
 import { pointInPolygon } from "@/canvas/math/polygon";
 import { planeProject } from "@/canvas/math/plane";
-import { clampUVToShape, projectPointToSurface } from "@/canvas/math/surfaceFrame";
+import { clampUVToShape, isUVInsideSurface, projectPointToSurface } from "@/canvas/math/surfaceFrame";
 import { encodeCanonical } from "@/canvas/math/canonicalCoordinates";
 import { beginDeskSwap, cancelDeskSwap, useDeskSwapStore, forceCompleteDeskSwap, type DeskSwapAttachmentPreviewStatus } from "@/state/deskSwapStore";
 import DeskSwapReviewBanner from "@/canvas/DeskSwapReviewBanner";
@@ -29,6 +29,7 @@ import DeskSwapReviewBanner from "@/canvas/DeskSwapReviewBanner";
 const ROTATE_STEP_DEG = 5;
 const DEFAULT_HOLD_INTERVAL_MS = 500;
 const DESK_HOLD_INTERVAL_MS = 150;
+const SURFACE_LIFT_TOLERANCE = 0.05;
 
 const DESK_CATALOG_IDS = new Set(
   PROP_CATALOG.filter((entry) => entry.primaryCategory === "desk").map((entry) => entry.id)
@@ -198,6 +199,16 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
       // Use point-in-polygon check with custom bounds
       const propPoint2D: [number, number] = [selectedGeneric.position[0], selectedGeneric.position[2]];
       return pointInPolygon(propPoint2D, customBounds);
+    }
+
+    if (deskSurfaceMeta) {
+      const projection = projectPointToSurface(deskSurfaceMeta, selectedGeneric.position);
+      if (projection) {
+        const inside = isUVInsideSurface(deskSurfaceMeta, projection.u, projection.v);
+        if (inside && Math.abs(projection.lift) <= SURFACE_LIFT_TOLERANCE) {
+          return true;
+        }
+      }
     }
 
     // Fall back to UV bounds check (same as GenericProp.tsx)

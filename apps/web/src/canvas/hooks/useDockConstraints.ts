@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 
 import { useLayoutFrameState } from './useLayoutFrame';
 import { useGenericProps } from './useGenericProps';
@@ -9,13 +9,16 @@ import {
   type GenericProp,
 } from '@/state/genericPropsStore';
 import type { LayoutFrame } from '@/state/layoutFrameStore';
+import type { SurfaceMeta } from '@/state/surfaceMetaStore';
+import { clampUVToShape, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
 
 const EPSILON = 1e-4;
 
 type DockConstraintContext = {
-  frame: LayoutFrame;
-  deskYawRad: number;
-  deskId: string | null;
+  frame: LayoutFrame | null;
+  activeDeskId: string | null;
+  deskPropsById: Map<string, GenericProp>;
+  surfaceMetaById: Map<string, SurfaceMeta>;
 };
 
 function shouldUpdateProp(
@@ -44,52 +47,59 @@ function solveDockPlacementForProp(
     return null;
   }
 
-  const { frame, deskYawRad, deskId } = context;
+  const { frame, activeDeskId, deskPropsById, surfaceMetaById } = context;
 
-  const up = [frame.up[0], frame.up[1], frame.up[2]] as const;
-  const right = [frame.right[0], frame.right[1], frame.right[2]] as const;
-  const forward = [frame.forward[0], frame.forward[1], frame.forward[2]] as const;
-  const basePoint = frame.center;
-
-  let lateral = 0;
-  let depth = 0;
-  let lift = 0;
-  let yawRel = 0;
-
-  const attachment =
-    prop.dockAttachment && deskId && prop.dockAttachment.deskInstanceId !== deskId
-      ? null
-      : prop.dockAttachment ?? null;
-
+  const attachment = prop.dockAttachment ?? null;
   if (attachment) {
-    const width = frame.extents.u;
-    const depthSpan = frame.extents.v;
-
-    const uNorm = attachment.offsetUV.u;
-    const vNorm = attachment.offsetUV.v;
-    lateral = (uNorm - 0.5) * (width || 0);
-    depth = (vNorm - 0.5) * (depthSpan || 0);
-    lift = attachment.lift;
-    yawRel = attachment.yawRel;
-  } else if (prop.dockOffset) {
-    lateral = prop.dockOffset.lateral;
-    depth = prop.dockOffset.depth;
-    lift = prop.dockOffset.lift;
-    yawRel = prop.dockOffset.yaw;
-  } else {
-    return null;
+    const surfaceKey = String(attachment.surfaceId);
+    const surfaceMeta = surfaceMetaById.get(surfaceKey);
+    if (surfaceMeta) {
+      const clamped = clampUVToShape(surfaceMeta, attachment.offsetUV.u, attachment.offsetUV.v);
+      const position = unprojectFromSurface(
+        surfaceMeta,
+        clamped.u,
+        clamped.v,
+        attachment.lift
+      );
+      if (position) {
+        const deskProp = deskPropsById.get(attachment.deskInstanceId);
+        const deskYaw = deskProp ? deskProp.rotation[1] : 0;
+        const rotation: [number, number, number] = [0, deskYaw + attachment.yawRel, 0];
+        return { position, rotation };
+      }
+    }
   }
 
-  const position: [number, number, number] = [
-    basePoint[0] + lateral * right[0] + depth * forward[0] + lift * up[0],
-    basePoint[1] + lateral * right[1] + depth * forward[1] + lift * up[1],
-    basePoint[2] + lateral * right[2] + depth * forward[2] + lift * up[2],
-  ];
+  const fallbackEligible =
+    !!prop.dockOffset &&
+    frame &&
+    activeDeskId &&
+    (!prop.dockAttachment || prop.dockAttachment.deskInstanceId === activeDeskId);
 
-  const worldYaw = yawRel + deskYawRad;
-  const rotation: [number, number, number] = [0, worldYaw, 0];
+  if (fallbackEligible) {
+    const deskProp = deskPropsById.get(activeDeskId);
+    if (!deskProp) {
+      return null;
+    }
 
-  return { position, rotation };
+    const { lateral, depth, lift, yaw } = prop.dockOffset!;
+
+    const up = [frame.up[0], frame.up[1], frame.up[2]] as const;
+    const right = [frame.right[0], frame.right[1], frame.right[2]] as const;
+    const forward = [frame.forward[0], frame.forward[1], frame.forward[2]] as const;
+    const basePoint = frame.center;
+
+    const position: [number, number, number] = [
+      basePoint[0] + lateral * right[0] + depth * forward[0] + lift * up[0],
+      basePoint[1] + lateral * right[1] + depth * forward[1] + lift * up[1],
+      basePoint[2] + lateral * right[2] + depth * forward[2] + lift * up[2],
+    ];
+
+    const rotation: [number, number, number] = [0, deskProp.rotation[1] + yaw, 0];
+    return { position, rotation };
+  }
+
+  return null;
 }
 
 export function useDockConstraints() {
@@ -101,11 +111,8 @@ export function useDockConstraints() {
   const deskProp = deskOwnerId
     ? genericProps.find((p) => p.id === deskOwnerId) ?? null
     : null;
-  const deskYawRad = deskProp?.rotation[1] ?? 0;
   const deskId = deskProp?.id ?? null;
 
-  const prevFrameRef = useRef<LayoutFrame | null>(null);
-  const prevDeskYawRef = useRef<number>(0);
   const genericPropsRef = useRef(genericProps);
 
   // Keep genericProps ref updated without triggering the main effect
@@ -113,44 +120,24 @@ export function useDockConstraints() {
     genericPropsRef.current = genericProps;
   });
 
-  useEffect(() => {
-    if (!layoutFrame.frame) {
-      prevFrameRef.current = null;
-      return;
-    }
+  useLayoutEffect(() => {
+    const frame = layoutFrame.frame ?? null;
 
-    const frame = layoutFrame.frame;
+    const deskPropsById = new Map<string, GenericProp>();
+    genericPropsRef.current.forEach((prop) => {
+      deskPropsById.set(prop.id, prop);
+    });
 
-    // Check if frame or desk yaw actually changed (avoid thrashing)
-    if (prevFrameRef.current && prevDeskYawRef.current === deskYawRad) {
-      const prev = prevFrameRef.current;
-      const orientationUnchanged =
-        prev.up[0] === frame.up[0] &&
-        prev.up[1] === frame.up[1] &&
-        prev.up[2] === frame.up[2] &&
-        prev.right[0] === frame.right[0] &&
-        prev.right[1] === frame.right[1] &&
-        prev.right[2] === frame.right[2] &&
-        prev.forward[0] === frame.forward[0] &&
-        prev.forward[1] === frame.forward[1] &&
-        prev.forward[2] === frame.forward[2];
-      const centerUnchanged =
-        prev.center[0] === frame.center[0] &&
-        prev.center[1] === frame.center[1] &&
-        prev.center[2] === frame.center[2];
-
-      if (orientationUnchanged && centerUnchanged) {
-        return;
-      }
-    }
-
-    prevFrameRef.current = frame;
-    prevDeskYawRef.current = deskYawRad;
+    const surfaceMetaById = new Map<string, SurfaceMeta>();
+    deskSurfaces.forEach(({ id, meta }) => {
+      surfaceMetaById.set(String(id), meta);
+    });
 
     const context: DockConstraintContext = {
       frame,
-      deskYawRad,
-      deskId,
+      activeDeskId: deskId,
+      deskPropsById,
+      surfaceMetaById,
     };
 
     // Update all docked props using the ref (avoids re-running when genericProps changes)
@@ -164,5 +151,5 @@ export function useDockConstraints() {
         setGenericPropRotation(prop.id, placement.rotation);
       }
     });
-  }, [layoutFrame.frame, deskYawRad, deskId]);
+  }, [layoutFrame.frame, deskId, deskSurfaces, genericProps]);
 }

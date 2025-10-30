@@ -11,7 +11,7 @@ import {
   type GenericProp,
 } from '@/state/genericPropsStore';
 import { clearSelection, setSelection } from '@/state/selectionStore';
-import { useSurface, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
+import { useSurface, useSurfaceMeta, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { planeProject } from '@/canvas/math/plane';
 import { lockCameraOrbit, unlockCameraOrbit } from '@/state/cameraInteractionStore';
 import { useSelection } from '@/canvas/hooks/useSelection';
@@ -25,6 +25,7 @@ import type { Vec3 } from '@/state/genericPropsStore';
 import { useGenericProps } from '@/canvas/hooks/useGenericProps';
 import { getDeskBounds } from '@/state/deskBoundsStore';
 import { pointInPolygon } from '@/canvas/math/polygon';
+import { isUVInsideSurface, projectPointToSurface } from '@/canvas/math/surfaceFrame';
 
 const DEFAULT_ANCHOR = { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } } as const;
 const DESK_CATALOG_IDS = new Set(
@@ -43,10 +44,11 @@ const HIGHLIGHT_MINOR_RADIUS_SCALE = 0.55;
 const HIGHLIGHT_MAJOR_RADIUS_SCALE = 1.1;
 const DESK_CLEARANCE = 0.015;
 const CLEARANCE_EPSILON = 1e-4;
-const DESK_DRIVE_BASE_SPEED = 0.002; // meters per frame when just outside stop radius
-const DESK_DRIVE_GAIN = 0.048; // additional speed per meter of pointer offset
-const DESK_DRIVE_MAX_STEP = 0.024; // cap desk travel per frame (~2.4cm)
+const DESK_DRIVE_BASE_SPEED = 0.0026; // meters per frame when just outside stop radius
+const DESK_DRIVE_GAIN = 0.055; // additional speed per meter of pointer offset
+const DESK_DRIVE_MAX_STEP = 0.028; // cap desk travel per frame (~2.8cm)
 const DESK_DRIVE_STOP_RADIUS = 0.02; // pointer within 2cm of center releases drag
+const SURFACE_LIFT_TOLERANCE = 0.05;
 
 type GenericPropInstanceProps = {
   prop: GenericProp;
@@ -57,6 +59,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const deskSurfaces = useSurfacesByKind('desk');
   const deskSurfaceId = deskSurfaces[0]?.id;
   const deskSurface = useSurface(deskSurfaceId ?? '');
+  const deskSurfaceMeta = useSurfaceMeta(deskSurfaceId ?? '');
   const deskOwnerId = deskSurfaces[0]?.meta.ownerId ?? null;
 
   const layoutFrame = useLayoutFrame();
@@ -421,6 +424,17 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       return pointInPolygon(propPoint2D, customBounds);
     }
 
+    if (deskSurfaceMeta) {
+      const projection = projectPointToSurface(deskSurfaceMeta, prop.position);
+      if (projection) {
+        if (isUVInsideSurface(deskSurfaceMeta, projection.u, projection.v)) {
+          if (Math.abs(projection.lift) <= SURFACE_LIFT_TOLERANCE) {
+            return true;
+          }
+        }
+      }
+    }
+
     // Fall back to UV bounds check (default behavior)
     const rayOriginY = (prop.bounds?.max[1] ?? prop.position[1]) + 1;
     TMP_RAY.origin.set(prop.position[0], rayOriginY, prop.position[2]);
@@ -428,7 +442,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     const hit = planeProject(TMP_RAY, deskSurface);
     if (!hit.hit) return false;
     return hit.u >= 0 && hit.u <= 1 && hit.v >= 0 && hit.v <= 1;
-  }, [deskSurface, prop.bounds, prop.position, deskProp]);
+  }, [deskSurface, deskSurfaceMeta, prop.bounds, prop.position, deskProp]);
 
   useEffect(() => {
     if (!isSelected || prop.status !== 'dragging') return;
@@ -559,7 +573,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         nextTuple[1] - pointerPoint[1],
         nextTuple[2] - pointerPoint[2],
       );
-    }, 250);
+    }, 320);
 
     return () => window.clearInterval(interval);
   }, [isDeskProp, prop.status, finishDrag, prop.id]);

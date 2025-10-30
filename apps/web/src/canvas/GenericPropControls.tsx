@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { PROP_CATALOG, CATEGORY_DEFINITIONS, SURFACE_TYPE_ICONS, type PropCategory, type PropCatalogEntry } from '@/data/propCatalog';
 import { spawnGenericProp } from '@/state/genericPropsStore';
 import { setSelection, clearSelection, getSelection, subscribeSelection } from '@/state/selectionStore';
-import { useSurface, useSurfacesByKind } from './hooks/useSurfaces';
+import { useSurface, useSurfaceMeta, useSurfacesByKind } from './hooks/useSurfaces';
 import { useGenericProps } from './hooks/useGenericProps';
 import { useUndoHistoryStore, createSnapshotFromProp } from '@/state/undoHistoryStore';
 import { registerCatalogCloseHandler } from '@/state/catalogState';
@@ -12,6 +12,7 @@ import { useDelayedVisibility } from './hooks/useDelayedVisibility';
 import PropPreviewOverlay from '@/canvas/PropPreviewOverlay';
 import { useGLTF } from '@react-three/drei';
 import { useDeskSwapStore, completeDeskSwap, cancelDeskSwap, setDeskSwapPreviewEntry } from '@/state/deskSwapStore';
+import { getSurfaceSpawnPoint } from '@/canvas/math/surfaceFrame';
 
 function lightenHex(base: string, amount = 0.2): string {
   const hex = base.startsWith('#') ? base.slice(1) : base;
@@ -170,6 +171,7 @@ useEffect(() => {
   const deskSurfaces = useSurfacesByKind('desk');
   const deskSurfaceId = deskSurfaces[0]?.id;
   const deskSurface = useSurface(deskSurfaceId ?? '');
+  const deskSurfaceMeta = useSurfaceMeta(deskSurfaceId ?? '');
 
   const deskHeight = useMemo(() => {
     if (!deskSurface) return null;
@@ -304,9 +306,12 @@ useEffect(() => {
     // Calculate spawn position - if desk exists, spawn at desk height + clearance
     // Otherwise use default staging position
     let position: [number, number, number] | undefined;
-    if (deskHeight !== null) {
-      // Spawn props at desk surface + small clearance
-      // Use same x/z as staging position but adjust y to desk height
+    if (deskSurfaceMeta) {
+      const spawn = getSurfaceSpawnPoint(deskSurfaceMeta, DESK_CLEARANCE);
+      if (spawn) {
+        position = spawn.position;
+      }
+    } else if (deskHeight !== null) {
       position = [0.6, deskHeight + DESK_CLEARANCE, -0.2];
     }
 
@@ -331,7 +336,7 @@ useEffect(() => {
 
     // Select the newly spawned prop (catalog will auto-close via selection subscription)
     setSelection({ kind: 'generic', id: prop.id });
-  }, [deskHeight, pushAction, isSwapActive, setIsOpen, completeDeskSwap]);
+  }, [deskHeight, deskSurfaceMeta, pushAction, isSwapActive, setIsOpen, completeDeskSwap]);
 
   const containerClass = ['pointer-events-none flex items-start justify-end gap-2', className]
     .filter(Boolean)

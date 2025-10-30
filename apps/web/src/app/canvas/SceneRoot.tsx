@@ -34,9 +34,9 @@ import { useDelayedVisibility } from "@/canvas/hooks/useDelayedVisibility";
 import type { LayoutFrame } from "@/state/layoutFrameStore";
 import { useActiveDeskId, useActiveDeskProp } from "@/canvas/hooks/useDeskProp";
 
-const DESK_MOVE_STEP = 0.08;
-const PROP_MOVE_STEP = 0.04;
-const MOVE_INTERVAL_MS = 50;
+const DESK_MOVE_SPEED = 0.85; // meters per second
+const PROP_MOVE_SPEED = 0.45; // meters per second
+const MIN_MOVEMENT_DELTA = 1 / 60;
 const MOVE_KEYS = new Set(['w', 'a', 's', 'd']);
 
 function projectHorizontal(vec: readonly number[]): Vec3 {
@@ -60,6 +60,8 @@ export default function SceneRoot() {
   useEffect(() => {
     layoutFrameRef.current = layoutFrame;
   }, [layoutFrame]);
+  const movementFrameRef = useRef<number | null>(null);
+  const lastMovementTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     genericPropsRef.current = genericProps;
@@ -95,12 +97,13 @@ export default function SceneRoot() {
     }
   }, [deskProp]);
 
-  const applyPropMovement = (
+  const applyPropMovement = useCallback((
     propsRef: MutableRefObject<GenericProp[]>,
     deskRef: MutableRefObject<GenericProp | null>,
     frameRef: MutableRefObject<LayoutFrame | null>,
     keysRef: MutableRefObject<Set<string>>,
     selectionRef: MutableRefObject<string | null>,
+    deltaSeconds = MIN_MOVEMENT_DELTA,
   ) => {
     const pressed = keysRef.current;
     if (pressed.size === 0) return;
@@ -148,9 +151,11 @@ export default function SceneRoot() {
 
     // Use different step sizes for desk vs other props
     const isDesk = deskRef.current?.id === selectedId;
-    const stepSize = isDesk ? DESK_MOVE_STEP : PROP_MOVE_STEP;
+    const delta = Math.max(deltaSeconds, MIN_MOVEMENT_DELTA);
+    const speed = isDesk ? DESK_MOVE_SPEED : PROP_MOVE_SPEED;
+    const distance = speed * delta;
 
-    const scale = stepSize / length;
+    const scale = distance / length;
     const deltaX = moveX * scale;
     const deltaZ = moveZ * scale;
 
@@ -166,7 +171,7 @@ export default function SceneRoot() {
     if (isDesk) {
       deskRef.current = { ...selectedProp, position: nextPos };
     }
-  };
+  }, []);
 
   useDockConstraints();
   useUndoHistory();
@@ -270,7 +275,7 @@ export default function SceneRoot() {
 
       if (!pressedKeysRef.current.has(key)) {
         pressedKeysRef.current.add(key);
-        applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
+        applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef, MIN_MOVEMENT_DELTA);
       }
       ev.preventDefault();
     }
@@ -292,12 +297,27 @@ export default function SceneRoot() {
   }, []);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef);
-    }, MOVE_INTERVAL_MS);
+    const loop = (time: number) => {
+      if (pressedKeysRef.current.size > 0) {
+        const last = lastMovementTimeRef.current ?? time;
+        const deltaSeconds = Math.min((time - last) / 1000, 0.25);
+        lastMovementTimeRef.current = time;
+        applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef, deltaSeconds);
+      } else {
+        lastMovementTimeRef.current = time;
+      }
+      movementFrameRef.current = window.requestAnimationFrame(loop);
+    };
 
-    return () => window.clearInterval(interval);
-  }, []);
+    movementFrameRef.current = window.requestAnimationFrame(loop);
+    return () => {
+      if (movementFrameRef.current !== null) {
+        window.cancelAnimationFrame(movementFrameRef.current);
+        movementFrameRef.current = null;
+      }
+      lastMovementTimeRef.current = null;
+    };
+  }, [applyPropMovement]);
 
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
