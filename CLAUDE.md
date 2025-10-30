@@ -43,8 +43,25 @@ The codebase recently underwent a major refactor migrating from hardcoded desk/m
 - The layout loading banner only appears while no frame has been resolved; swapping desks no longer leaves “Loading workspace…” stuck on screen.
 - **Known limitations (Nov 2025):**
   - Ghost preview/summary cards only render while the desk remains selected. If selection clears, the UI feedback disappears even though swap mode is still active.
-  - Reprojection logic does not reliably keep undocked props on the new desk; they may float or clip. Docked props can slip beneath the surface when surface metadata is sparse.
-  - Until the remap solver matures, expect to fine-tune placement manually after swap or abort the swap entirely.
+- Reprojection logic does not reliably keep undocked props on the new desk; they may float or clip. Docked props can slip beneath the surface when surface metadata is sparse.
+- Until the remap solver matures, expect to fine-tune placement manually after swap or abort the swap entirely.
+
+---
+
+## ⚠️ Desk Surface “Hidden Mirror” Workaround (February 2026)
+
+Some desks provide surface polygons that mirror across the U/V axis when converted to normalized UVs. The overlay only draws the true polygon, but docking math historically allowed props to latch onto the mirrored half.
+
+**Current behaviour:**
+- `isUVInsideSurface` now normalizes against the projected U/V ranges (same ones the overlay uses).
+- If the check fails and the surface is a polygon, we treat the prop as off-desk—no rectangular fallback, no attachments recorded.
+- `GenericProp` and `LayoutControls` deliberately render the Dock button in the disabled state so users see the standard “Move prop over desk surface to dock” hint.
+- Attachments, swap remapping, and canonical sampling convert normalized UVs back through the shared helper before calling `unprojectFromSurface`.
+
+**Caveats:**
+- The hidden mirror still exists in surface-space coordinates; any new code that uses raw `shape.points` must normalize via `getSurfaceShapeInfo`/`normalizedUVToProjected`.
+- Visualization (fill mesh) scales using the actual projected span; if you swap in new desks and see stretching, revisit the polygon data, not the guardrail.
+- See `docs/desk-surface-hidden-mirror.md` for full context and guidelines.
 
 When extending the swap flow, make sure to update both the preview analysis (`deskSwapStore.setPreviewSurfaces`) and the summary panel so the gating logic stays in sync.
 

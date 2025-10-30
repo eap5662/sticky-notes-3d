@@ -10,6 +10,14 @@ import { PROP_CATALOG } from '@/data/propCatalog';
 import type { AnchorConfig } from '@/canvas/props/GLTFProp';
 import { getSurfaceShapeInfo, unprojectFromSurface, type SurfaceShapeInfo } from '@/canvas/math/surfaceFrame';
 
+function lerpRange(value: number, range: { min: number; max: number }) {
+  const span = range.max - range.min;
+  if (Math.abs(span) < 1e-8) {
+    return range.min;
+  }
+  return range.min + value * span;
+}
+
 const COLORS = [
   '#ff0000', // Red
   '#00ff00', // Green
@@ -25,48 +33,37 @@ const VERTEX_DECIMATION = 10; // Only show every Nth vertex (1 = all, 10 = every
  * Create triangulated BufferGeometry from polygon points using earcut.
  * Returns rect geometry if shape is not polygon.
  *
- * IMPORTANT: Polygon points are in world-space meters (from polygon extraction),
- * but we need normalized 0-1 coefficients for the geometry. We scale the geometry
- * by extents during rendering, so vertices should be normalized here.
+ * Polygon points coming from `SurfaceShapeInfo` are expressed in surface-space
+ * coordinates (fractions along the U and V axes). We build geometry in that
+ * space and let the mesh transform scale/rotate it into world space.
  */
 function createShapeGeometry(meta: SurfaceMeta, shapeInfo: SurfaceShapeInfo | null): THREE.BufferGeometry {
-  console.log('[createShapeGeometry] Called with meta.shape:', meta.shape);
-
   if (!meta.shape || meta.shape.type === 'rect' || !shapeInfo || shapeInfo.type === 'rect') {
-    console.log('[createShapeGeometry] Using PlaneGeometry for rect:', meta.extents);
     // Fallback to plane geometry for rect
     return new THREE.PlaneGeometry(meta.extents.u, meta.extents.v);
   }
 
   if (meta.shape.type === 'polygon' && shapeInfo.type === 'polygon') {
-    const rawRing = shapeInfo.rawPoints;
-    console.log('[createShapeGeometry] Creating polygon geometry with raw points:', rawRing);
+    const normalizedRing = shapeInfo.normalizedPoints;
 
-    // Earcut expects polygons without duplicated closing vertex
-    const usableCount = rawRing.length > 1 ? rawRing.length - 1 : rawRing.length;
+    const usableCount = normalizedRing.length > 1 ? normalizedRing.length - 1 : normalizedRing.length;
     const flat: number[] = [];
     const positions: number[] = [];
     for (let i = 0; i < usableCount; i += 1) {
-      const [u, v] = rawRing[i];
-      const localU = u * shapeInfo.uOrientation;
-      const localV = v * shapeInfo.vOrientation;
-      flat.push(localU, localV);
-      positions.push(localU, localV, 0);
+      const [u, v] = normalizedRing[i];
+      flat.push(u, v);
+      positions.push(u, v, 0);
     }
 
     const indices = earcut(flat);
-    console.log('[createShapeGeometry] Earcut produced indices:', indices.length, 'triangles:', indices.length / 3);
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
-
-    console.log('[createShapeGeometry] Created geometry with', positions.length / 3, 'vertices');
     return geometry;
   }
 
-  console.log('[createShapeGeometry] Fallback to rect (unexpected)');
   return new THREE.PlaneGeometry(meta.extents.u, meta.extents.v);
 }
 
@@ -122,7 +119,11 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
 
     const worldPoints: THREE.Vector3[] = [];
     for (const [nu, nv] of ring) {
-      const world = unprojectFromSurface(meta, nu, nv, 0);
+      const projU =
+        shapeInfo.type === 'polygon' ? lerpRange(nu, shapeInfo.projectedURange) : nu;
+      const projV =
+        shapeInfo.type === 'polygon' ? lerpRange(nv, shapeInfo.projectedVRange) : nv;
+      const world = unprojectFromSurface(meta, projU, projV, 0);
       if (!world) {
         return null;
       }
@@ -145,30 +146,12 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
     const normal = new THREE.Vector3(...meta.normal).normalize();
 
     // Verify chirality: normal should equal uDir × vDir
-    const computedNormal = uDir.clone().cross(vDir);
-    const chiralityCheck = normal.dot(computedNormal);
-    console.log('[BoundsMarker rotation] Chirality check:', {
-      label,
-      uDir: meta.uDir,
-      vDir: meta.vDir,
-      normal: meta.normal,
-      computedNormal: [computedNormal.x, computedNormal.y, computedNormal.z],
-      dotProduct: chiralityCheck,
-      isRightHanded: chiralityCheck > 0.99,
-    });
-
     // PlaneGeometry: X is width (uDir), Y is height (vDir), Z is normal
     const rotMatrix = new THREE.Matrix4();
     rotMatrix.makeBasis(uDir, vDir, normal);
 
     const euler = new THREE.Euler();
     euler.setFromRotationMatrix(rotMatrix);
-
-    console.log('[BoundsMarker rotation] Euler angles:', {
-      label,
-      euler: [euler.x, euler.y, euler.z],
-      order: euler.order,
-    });
 
     return euler;
   }, [meta.uDir, meta.vDir, meta.normal, label]);
@@ -182,30 +165,34 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
     const lift = 0.02; // 2cm lift for visibility
     const normal = new THREE.Vector3(...meta.normal).normalize();
 
+    let scale: [number, number, number];
+    let basePosition: THREE.Vector3;
+
+    const uAxisLength =
+      meta.uAxis && meta.uAxis.length === 3 ? new THREE.Vector3(...meta.uAxis).length() : Math.abs(meta.extents.u);
+    const vAxisLength =
+      meta.vAxis && meta.vAxis.length === 3 ? new THREE.Vector3(...meta.vAxis).length() : Math.abs(meta.extents.v);
+
     if (shapeInfo?.type === 'polygon') {
-      const origin = new THREE.Vector3(...(meta.origin || meta.center));
-      origin.add(normal.clone().multiplyScalar(lift));
-      return {
-        position: [origin.x, origin.y, origin.z] as [number, number, number],
-        rotation,
-      };
+      const projectedMin = { u: shapeInfo.projectedURange.min, v: shapeInfo.projectedVRange.min };
+      const minWorld = unprojectFromSurface(meta, projectedMin.u, projectedMin.v, 0);
+      basePosition = minWorld ? new THREE.Vector3(...minWorld) : new THREE.Vector3(...(meta.origin || meta.center));
+      scale = [Math.max(uAxisLength, 1e-6), Math.max(vAxisLength, 1e-6), 1];
+    } else {
+      basePosition = new THREE.Vector3(...meta.center);
+      scale = [Math.max(uAxisLength, 1e-6), Math.max(vAxisLength, 1e-6), 1];
     }
 
-    const center = new THREE.Vector3(...meta.center);
-    center.add(normal.clone().multiplyScalar(lift));
+    basePosition.add(normal.clone().multiplyScalar(lift));
 
     return {
-      position: [center.x, center.y, center.z] as [number, number, number],
+      position: [basePosition.x, basePosition.y, basePosition.z] as [number, number, number],
       rotation,
+      scale,
     };
-  }, [meta.origin, meta.center, meta.normal, points, rotation, shapeInfo]);
+  }, [meta.origin, meta.center, meta.normal, points, rotation, shapeInfo, meta.uAxis, meta.vAxis, meta.extents.u, meta.extents.v]);
 
   const shapeGeometry = useMemo(() => {
-    console.log('[DeskSurfaceBoundsMarkers] Creating geometry for shape:', {
-      type: meta.shape?.type,
-      points: meta.shape?.type === 'polygon' ? meta.shape.points.length : 'N/A',
-      extents: meta.extents,
-    });
     return createShapeGeometry(meta, shapeInfo);
   }, [meta, shapeInfo]);
 
@@ -223,7 +210,13 @@ function BoundsMarker({ meta, color, label }: BoundsMarkerProps) {
         raycast={() => null}
       />
       {/* Add a semi-transparent fill to visualize the surface area, lifted up slightly */}
-      <mesh position={shapeTransform.position} rotation={shapeTransform.rotation} geometry={shapeGeometry} raycast={() => null}>
+      <mesh
+        position={shapeTransform.position}
+        rotation={shapeTransform.rotation}
+        scale={shapeTransform.scale}
+        geometry={shapeGeometry}
+        raycast={() => null}
+      >
         <meshBasicMaterial
           color={color}
           transparent

@@ -208,10 +208,19 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
         if (inside && Math.abs(projection.lift) <= SURFACE_LIFT_TOLERANCE) {
           return true;
         }
+        if (!inside && deskSurfaceMeta.shape?.type === 'polygon') {
+          return false;
+        }
+      } else if (deskSurfaceMeta.shape?.type === 'polygon') {
+        return false;
       }
     }
 
-    // Fall back to UV bounds check (same as GenericProp.tsx)
+    if (deskSurfaceMeta?.shape?.type === 'polygon') {
+      return false;
+    }
+
+    // Fall back to UV bounds check (same as GenericProp.tsx) for rectangular desks
     const TMP_RAY = new THREE.Ray();
     const rayOriginY = (selectedGeneric.bounds?.max[1] ?? selectedGeneric.position[1]) + 1;
     TMP_RAY.origin.set(selectedGeneric.position[0], rayOriginY, selectedGeneric.position[2]);
@@ -269,6 +278,11 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
     const beforeDocked = selectedGeneric.docked;
     const beforePos = selectedGeneric.position;
 
+    if (!isOverDesk && deskSurfaceMeta?.shape?.type === 'polygon') {
+      // Guardrail workaround: prevent docking when cursor sits outside the true polygon.
+      return;
+    }
+
     // Calculate dock offset from current world position
     const frame = layoutFrame.frame;
     const pos = selectedGeneric.position;
@@ -298,6 +312,26 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
     const propWorldYaw = rot[1];
     const propDeskRelativeYaw = propWorldYaw - deskYawRad;
 
+    const isPolygonSurface = deskSurfaceMeta?.shape?.type === 'polygon';
+    let projectedUV: { u: number; v: number } | null = null;
+    let insideSurface = false;
+    let liftForAttachment = lift;
+
+    if (deskSurfaceMeta) {
+      const projection = projectPointToSurface(deskSurfaceMeta, pos);
+      if (projection && Math.abs(projection.lift) <= SURFACE_LIFT_TOLERANCE) {
+        insideSurface = isUVInsideSurface(deskSurfaceMeta, projection.u, projection.v);
+        if (insideSurface) {
+          projectedUV = { u: projection.u, v: projection.v };
+          liftForAttachment = projection.lift;
+        }
+      }
+
+      if (!insideSurface) {
+        return;
+      }
+    }
+
     const dockOffset = {
       lateral,
       depth,
@@ -320,14 +354,13 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
           };
         }
 
-        const projection = projectPointToSurface(deskSurfaceMeta, pos);
-        if (projection) {
-          const clamped = clampUVToShape(deskSurfaceMeta, projection.u, projection.v);
+        if (projectedUV) {
+          const clamped = clampUVToShape(deskSurfaceMeta, projectedUV.u, projectedUV.v);
           dockAttachment = {
             deskInstanceId: deskProp.id,
             surfaceId: deskSurfaceId,
-            offsetUV: clamped,
-            lift: projection.lift,
+            offsetUV: { u: clamped.u, v: clamped.v },
+            lift: liftForAttachment,
             yawRel: propDeskRelativeYaw,
             surfaceSnapshot:
               deskSurfaceMeta.shape && deskSurfaceMeta.shape.type === 'rect'
@@ -348,7 +381,7 @@ export default function LayoutControls({ className = "", overrideSelectionId }: 
         }
       }
 
-      if (!dockAttachment) {
+      if (!dockAttachment && !isPolygonSurface) {
         const width = frame.extents.u;
         const depthSpan = frame.extents.v;
         if (width > 0 && depthSpan > 0) {

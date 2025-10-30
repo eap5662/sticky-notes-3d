@@ -427,15 +427,19 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     if (deskSurfaceMeta) {
       const projection = projectPointToSurface(deskSurfaceMeta, prop.position);
       if (projection) {
-        if (isUVInsideSurface(deskSurfaceMeta, projection.u, projection.v)) {
-          if (Math.abs(projection.lift) <= SURFACE_LIFT_TOLERANCE) {
-            return true;
-          }
+        const inside = isUVInsideSurface(deskSurfaceMeta, projection.u, projection.v);
+        if (inside && Math.abs(projection.lift) <= SURFACE_LIFT_TOLERANCE) {
+          return true;
         }
+        if (!inside && deskSurfaceMeta.shape?.type === 'polygon') {
+          return false;
+        }
+      } else if (deskSurfaceMeta.shape?.type === 'polygon') {
+        return false;
       }
     }
 
-    // Fall back to UV bounds check (default behavior)
+    // Fall back to UV bounds check (default behavior) for rect surfaces
     const rayOriginY = (prop.bounds?.max[1] ?? prop.position[1]) + 1;
     TMP_RAY.origin.set(prop.position[0], rayOriginY, prop.position[2]);
     TMP_RAY.direction.set(0, -1, 0);

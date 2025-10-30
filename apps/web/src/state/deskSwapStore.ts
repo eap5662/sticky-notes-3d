@@ -22,7 +22,7 @@ import {
 import { createSnapshotFromProp, useUndoHistoryStore, type DeskSwapAttachmentSnapshot } from '@/state/undoHistoryStore';
 import { setSelection } from '@/state/selectionStore';
 import type { SurfaceMeta } from '@/state/surfaceMetaStore';
-import { clampUVToShape, projectPointToSurface, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
+import { clampUVToShape, normalizedUVToProjected, projectPointToSurface, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
 import { decodeCanonical, encodeCanonical, type CanonicalSnapshot } from '@/canvas/math/canonicalCoordinates';
 import { createSurfaceId } from '@/canvas/surfaces';
 
@@ -173,7 +173,8 @@ function createSurfacePlan(
   yawRel: number,
   options?: { canonicalSampleCount?: number },
 ): AttachmentPlanSurface {
-  const clamped = clampUVToShape(meta, uv.u, uv.v);
+  const projected = normalizedUVToProjected(meta, uv.u, uv.v);
+  const clamped = clampUVToShape(meta, projected.u, projected.v);
   const delta = Math.abs(clamped.u - uv.u) + Math.abs(clamped.v - uv.v);
   return {
     kind: 'surface',
@@ -314,7 +315,8 @@ function realizeAttachmentPlan(
     let surfaceSnapshot;
     if (meta?.shape) {
       let canonicalSnapshot;
-      const candidatePoint = unprojectFromSurface(meta, plan.offsetUV.u, plan.offsetUV.v, plan.lift);
+      const projectedUV = normalizedUVToProjected(meta, plan.offsetUV.u, plan.offsetUV.v);
+      const candidatePoint = unprojectFromSurface(meta, projectedUV.u, projectedUV.v, plan.lift);
       if (candidatePoint) {
         const canonical = encodeCanonical(meta, candidatePoint, plan.yawRel, {
           sampleCount: plan.canonicalSampleCount,

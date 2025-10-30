@@ -151,22 +151,19 @@ const RECT_NORMALIZED_POINTS: Array<[number, number]> = [
   [0, 0],
 ];
 
+type Range = { min: number; max: number };
+
 type RectShapeData = {
   type: 'rect';
   normalizedPoints: Array<[number, number]>;
 };
 
-type Range = { min: number; max: number };
-type Orientation = 1 | -1;
-
 type PolygonShapeData = {
   type: 'polygon';
   rawPoints: Array<[number, number]>;
+  projectedURange: Range;
+  projectedVRange: Range;
   normalizedPoints: Array<[number, number]>;
-  uRange: Range;
-  vRange: Range;
-  uOrientation: Orientation;
-  vOrientation: Orientation;
 };
 
 type SurfaceShapeData = RectShapeData | PolygonShapeData;
@@ -181,88 +178,103 @@ function ensureClosed(points: Array<[number, number]>, eps = 1e-6) {
   return points;
 }
 
+function mapProjectedToNormalized(value: number, range: Range) {
+  const span = range.max - range.min;
+  if (Math.abs(span) < 1e-8) {
+    return 0;
+  }
+  return (value - range.min) / span;
+}
+
+function mapNormalizedToProjected(value: number, range: Range) {
+  const span = range.max - range.min;
+  if (Math.abs(span) < 1e-8) {
+    return range.min;
+  }
+  return range.min + value * span;
+}
+
+const TMP_FRAME_WORLD = new THREE.Vector3();
+const TMP_FRAME_U_UNIT = new THREE.Vector3();
+const TMP_FRAME_V_UNIT = new THREE.Vector3();
+
 function createPolygonShape(meta: SurfaceMeta): PolygonShapeData | null {
   if (!meta.shape || meta.shape.type !== 'polygon') {
     return null;
   }
-
   const rawPoints = ensureClosed(meta.shape.points.map(([px, py]) => [px, py]) as Array<[number, number]>);
-
   if (rawPoints.length < 4) {
     return null;
   }
 
-  let uMin = Number.POSITIVE_INFINITY;
-  let uMax = Number.NEGATIVE_INFINITY;
-  let vMin = Number.POSITIVE_INFINITY;
-  let vMax = Number.NEGATIVE_INFINITY;
-
-  for (const [u, v] of rawPoints) {
-    if (u < uMin) uMin = u;
-    if (u > uMax) uMax = u;
-    if (v < vMin) vMin = v;
-    if (v > vMax) vMax = v;
-  }
-
-  if (!Number.isFinite(uMin) || !Number.isFinite(uMax) || !Number.isFinite(vMin) || !Number.isFinite(vMax)) {
+  const frame = buildFrame(meta);
+  if (!frame) {
     return null;
   }
 
-  const uSpan = uMax - uMin;
-  const vSpan = vMax - vMin;
+  const uUnit = TMP_FRAME_U_UNIT.copy(frame.uAxis).normalize();
+  const vUnit = TMP_FRAME_V_UNIT.copy(frame.vAxis).normalize();
+  const origin = frame.origin;
+
+  const projected: Array<[number, number]> = [];
+
+  for (const [ru, rv] of rawPoints) {
+    TMP_FRAME_WORLD.copy(origin);
+    TMP_FRAME_WORLD.addScaledVector(uUnit, ru);
+    TMP_FRAME_WORLD.addScaledVector(vUnit, rv);
+    const projection = projectPointToSurface(meta, [TMP_FRAME_WORLD.x, TMP_FRAME_WORLD.y, TMP_FRAME_WORLD.z]);
+    if (!projection) {
+      return null;
+    }
+    projected.push([projection.u, projection.v]);
+  }
+
+  ensureClosed(projected);
+
+  let projUMin = Number.POSITIVE_INFINITY;
+  let projUMax = Number.NEGATIVE_INFINITY;
+  let projVMin = Number.POSITIVE_INFINITY;
+  let projVMax = Number.NEGATIVE_INFINITY;
+
+  for (const [pu, pv] of projected) {
+    if (pu < projUMin) projUMin = pu;
+    if (pu > projUMax) projUMax = pu;
+    if (pv < projVMin) projVMin = pv;
+    if (pv > projVMax) projVMax = pv;
+  }
+
+  if (
+    !Number.isFinite(projUMin) ||
+    !Number.isFinite(projUMax) ||
+    !Number.isFinite(projVMin) ||
+    !Number.isFinite(projVMax)
+  ) {
+    return null;
+  }
+
+  const uSpan = projUMax - projUMin;
+  const vSpan = projVMax - projVMin;
   if (Math.abs(uSpan) < 1e-8 || Math.abs(vSpan) < 1e-8) {
     return null;
   }
 
-  const uRange = { min: uMin, max: uMax };
-  const vRange = { min: vMin, max: vMax };
-  const uOrientation = determineOrientation(uMin, uMax);
-  const vOrientation = determineOrientation(vMin, vMax);
-  const normalizedPoints = ensureClosed(
-    rawPoints.map(([u, v]) => [
-      mapFromShapeSpace(u, uRange, uOrientation),
-      mapFromShapeSpace(v, vRange, vOrientation),
+  const projectedURange = { min: projUMin, max: projUMax };
+  const projectedVRange = { min: projVMin, max: projVMax };
+
+  const normalized = ensureClosed(
+    projected.map(([pu, pv]) => [
+      mapProjectedToNormalized(pu, projectedURange),
+      mapProjectedToNormalized(pv, projectedVRange),
     ]) as Array<[number, number]>
   );
 
   return {
     type: 'polygon',
     rawPoints,
-    normalizedPoints,
-    uRange,
-    vRange,
-    uOrientation,
-    vOrientation,
+    projectedURange,
+    projectedVRange,
+    normalizedPoints: normalized,
   };
-}
-
-function determineOrientation(minVal: number, maxVal: number): Orientation {
-  const distToMin = Math.abs(minVal);
-  const distToMax = Math.abs(maxVal);
-  // Normalized 0 should map to whichever endpoint is closest to zero.
-  return distToMin <= distToMax ? 1 : -1;
-}
-
-function mapToShapeSpace(value: number, range: Range, orientation: Orientation) {
-  const span = range.max - range.min;
-  if (Math.abs(span) < 1e-8) {
-    return range.min;
-  }
-  if (orientation === 1) {
-    return range.min + value * span;
-  }
-  return range.max - value * span;
-}
-
-function mapFromShapeSpace(value: number, range: Range, orientation: Orientation) {
-  const span = range.max - range.min;
-  if (Math.abs(span) < 1e-8) {
-    return 0;
-  }
-  if (orientation === 1) {
-    return (value - range.min) / span;
-  }
-  return (range.max - value) / span;
 }
 
 function getSurfaceShape(meta: SurfaceMeta | null): SurfaceShapeData | null {
@@ -283,6 +295,20 @@ export function getSurfaceShapeInfo(meta: SurfaceMeta | null): SurfaceShapeInfo 
   return getSurfaceShape(meta);
 }
 
+export function normalizedUVToProjected(meta: SurfaceMeta | null, u: number, v: number): { u: number; v: number } {
+  const shape = getSurfaceShape(meta);
+  if (!shape || shape.type === 'rect') {
+    return { u, v };
+  }
+  if (u < -0.5 || u > 1.5 || v < -0.5 || v > 1.5) {
+    return { u, v };
+  }
+  return {
+    u: mapNormalizedToProjected(u, shape.projectedURange),
+    v: mapNormalizedToProjected(v, shape.projectedVRange),
+  };
+}
+
 export function clampUVToShape(meta: SurfaceMeta | null, u: number, v: number): { u: number; v: number } {
   const shape = getSurfaceShape(meta);
   if (!meta || !shape) {
@@ -296,17 +322,17 @@ export function clampUVToShape(meta: SurfaceMeta | null, u: number, v: number): 
     };
   }
 
-  const uRaw = mapToShapeSpace(u, shape.uRange, shape.uOrientation);
-  const vRaw = mapToShapeSpace(v, shape.vRange, shape.vOrientation);
+  const normU = mapProjectedToNormalized(u, shape.projectedURange);
+  const normV = mapProjectedToNormalized(v, shape.projectedVRange);
 
-  if (pointInPolygon(uRaw, vRaw, shape.rawPoints)) {
-    return { u, v };
+  if (pointInPolygon(normU, normV, shape.normalizedPoints)) {
+    return { u: Math.min(1, Math.max(0, normU)), v: Math.min(1, Math.max(0, normV)) };
   }
 
-  const clamped = closestPointOnPolygon(uRaw, vRaw, shape.rawPoints);
+  const clamped = closestPointOnPolygon(normU, normV, shape.normalizedPoints);
   return {
-    u: mapFromShapeSpace(clamped.u, shape.uRange, shape.uOrientation),
-    v: mapFromShapeSpace(clamped.v, shape.vRange, shape.vOrientation),
+    u: Math.min(1, Math.max(0, clamped.u)),
+    v: Math.min(1, Math.max(0, clamped.v)),
   };
 }
 
@@ -322,18 +348,25 @@ export function isUVInsideSurface(meta: SurfaceMeta | null, u: number, v: number
     return insideU && insideV;
   }
 
-  const uRaw = mapToShapeSpace(u, shape.uRange, shape.uOrientation);
-  const vRaw = mapToShapeSpace(v, shape.vRange, shape.vOrientation);
+  const normU = mapProjectedToNormalized(u, shape.projectedURange);
+  const normV = mapProjectedToNormalized(v, shape.projectedVRange);
 
-  if (pointInPolygon(uRaw, vRaw, shape.rawPoints)) {
+  const outsideNorm =
+    normU < -tolerance ||
+    normU > 1 + tolerance ||
+    normV < -tolerance ||
+    normV > 1 + tolerance;
+  if (outsideNorm) {
+    return false;
+  }
+
+  if (pointInPolygon(normU, normV, shape.normalizedPoints)) {
     return true;
   }
 
   if (tolerance > 0) {
-    const closest = closestPointOnPolygon(uRaw, vRaw, shape.rawPoints);
-    const closestU = mapFromShapeSpace(closest.u, shape.uRange, shape.uOrientation);
-    const closestV = mapFromShapeSpace(closest.v, shape.vRange, shape.vOrientation);
-    const dist = Math.hypot(closestU - u, closestV - v);
+    const closest = closestPointOnPolygon(normU, normV, shape.normalizedPoints);
+    const dist = Math.hypot(closest.u - normU, closest.v - normV);
     return dist <= tolerance;
   }
 
@@ -378,15 +411,17 @@ export function getSurfaceSpawnPoint(
   let targetV = 0.5;
 
   if (shape.type === 'polygon') {
-    const centroid = polygonCentroid(shape.rawPoints);
+    const centroid = polygonCentroid(shape.normalizedPoints);
     if (centroid) {
-      targetU = mapFromShapeSpace(centroid[0], shape.uRange, shape.uOrientation);
-      targetV = mapFromShapeSpace(centroid[1], shape.vRange, shape.vOrientation);
+      targetU = centroid[0];
+      targetV = centroid[1];
     }
   }
 
-  const clamped = clampUVToShape(meta, targetU, targetV);
-  const position = unprojectFromSurface(meta, clamped.u, clamped.v, clearance);
+  const projectedTarget = normalizedUVToProjected(meta, targetU, targetV);
+  const clamped = clampUVToShape(meta, projectedTarget.u, projectedTarget.v);
+  const { u: rawU, v: rawV } = normalizedUVToProjected(meta, clamped.u, clamped.v);
+  const position = unprojectFromSurface(meta, rawU, rawV, clearance);
 
   if (!position) {
     return null;

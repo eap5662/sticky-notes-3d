@@ -10,7 +10,7 @@ import {
 } from '@/state/genericPropsStore';
 import type { LayoutFrame } from '@/state/layoutFrameStore';
 import type { SurfaceMeta } from '@/state/surfaceMetaStore';
-import { clampUVToShape, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
+import { clampUVToShape, normalizedUVToProjected, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
 
 const EPSILON = 1e-4;
 
@@ -54,13 +54,10 @@ function solveDockPlacementForProp(
     const surfaceKey = String(attachment.surfaceId);
     const surfaceMeta = surfaceMetaById.get(surfaceKey);
     if (surfaceMeta) {
-      const clamped = clampUVToShape(surfaceMeta, attachment.offsetUV.u, attachment.offsetUV.v);
-      const position = unprojectFromSurface(
-        surfaceMeta,
-        clamped.u,
-        clamped.v,
-        attachment.lift
-      );
+      const projectedInput = normalizedUVToProjected(surfaceMeta, attachment.offsetUV.u, attachment.offsetUV.v);
+      const clamped = clampUVToShape(surfaceMeta, projectedInput.u, projectedInput.v);
+      const projected = normalizedUVToProjected(surfaceMeta, clamped.u, clamped.v);
+      const position = unprojectFromSurface(surfaceMeta, projected.u, projected.v, attachment.lift);
       if (position) {
         const deskProp = deskPropsById.get(attachment.deskInstanceId);
         const deskYaw = deskProp ? deskProp.rotation[1] : 0;

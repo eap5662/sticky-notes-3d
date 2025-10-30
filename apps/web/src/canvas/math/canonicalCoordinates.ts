@@ -1,7 +1,7 @@
 import type { SurfaceMeta } from '@/state/surfaceMetaStore';
 import type { Vec3 } from '@/canvas/surfaces';
 import { buildCanonicalSampler, type CanonicalSampler } from '@/canvas/math/canonicalSampler';
-import { projectPointToSurface, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
+import { normalizedUVToProjected, projectPointToSurface, unprojectFromSurface } from '@/canvas/math/surfaceFrame';
 
 const EPS = 1e-6;
 
@@ -133,7 +133,8 @@ export function decodeCanonical(
     v += weight * sy;
   }
 
-  const position = unprojectFromSurface(meta, u, v, lift);
+  const projected = normalizedUVToProjected(meta, u, v);
+  const position = unprojectFromSurface(meta, projected.u, projected.v, lift);
 
   return {
     uv: { u, v },
