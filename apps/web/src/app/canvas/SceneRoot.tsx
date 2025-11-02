@@ -25,7 +25,7 @@ import GroundGrid from "@/canvas/GroundGrid";
 import { clearSelection } from "@/state/selectionStore";
 import { closeCatalog } from "@/state/catalogState";
 import { motion, AnimatePresence } from "framer-motion";
-import { spawnGenericProp, setGenericPropPosition, dockPropWithOffset, dockPropWithAttachment, floatDockedProp, type Vec3, type GenericProp } from "@/state/genericPropsStore";
+import { spawnGenericProp, setGenericPropPosition, dockPropWithOffset, dockPropWithAttachment, floatDockedProp, getGenericPropsSnapshot, type Vec3, type GenericProp } from "@/state/genericPropsStore";
 import { PROP_CATALOG } from "@/data/propCatalog";
 import { useGenericProps } from "@/canvas/hooks/useGenericProps";
 import { useLayoutFrame } from "@/canvas/hooks/useLayoutFrame";
@@ -55,6 +55,7 @@ export default function SceneRoot() {
 
   const deskPropRef = useRef<GenericProp | null>(deskProp);
   const genericPropsRef = useRef<GenericProp[]>(genericProps);
+  const loggedSnapshotRef = useRef(false);
 
   const layoutFrameRef = useRef<LayoutFrame | null>(layoutFrame);
   useEffect(() => {
@@ -65,6 +66,26 @@ export default function SceneRoot() {
 
   useEffect(() => {
     genericPropsRef.current = genericProps;
+    if (!loggedSnapshotRef.current) {
+      loggedSnapshotRef.current = true;
+      const immediate = getGenericPropsSnapshot().map((prop) => ({
+        id: prop.id,
+        position: prop.position,
+        docked: prop.docked,
+        deskInstanceId: prop.dockAttachment?.deskInstanceId ?? null,
+      }));
+      console.info('[SceneRoot][immediate-snapshot]', immediate);
+      requestAnimationFrame(() => {
+        const next = getGenericPropsSnapshot().map((prop) => ({
+          id: prop.id,
+          position: prop.position,
+          docked: prop.docked,
+          deskInstanceId: prop.dockAttachment?.deskInstanceId ?? null,
+        }));
+        console.info('[SceneRoot][next-frame-snapshot]', next);
+        loggedSnapshotRef.current = false;
+      });
+    }
   }, [genericProps]);
 
   const selection = useSelection();
@@ -173,6 +194,11 @@ export default function SceneRoot() {
     }
   }, []);
 
+  const applyPropMovementRef = useRef(applyPropMovement);
+  useEffect(() => {
+    applyPropMovementRef.current = applyPropMovement;
+  }, [applyPropMovement]);
+
   useDockConstraints();
   useUndoHistory();
   // Auto-spawn desk on first mount if none exists
@@ -275,7 +301,7 @@ export default function SceneRoot() {
 
       if (!pressedKeysRef.current.has(key)) {
         pressedKeysRef.current.add(key);
-        applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef, MIN_MOVEMENT_DELTA);
+        applyPropMovementRef.current(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef, MIN_MOVEMENT_DELTA);
       }
       ev.preventDefault();
     }
@@ -302,7 +328,7 @@ export default function SceneRoot() {
         const last = lastMovementTimeRef.current ?? time;
         const deltaSeconds = Math.min((time - last) / 1000, 0.25);
         lastMovementTimeRef.current = time;
-        applyPropMovement(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef, deltaSeconds);
+        applyPropMovementRef.current(genericPropsRef, deskPropRef, layoutFrameRef, pressedKeysRef, selectedIdRef, deltaSeconds);
       } else {
         lastMovementTimeRef.current = time;
       }
@@ -317,7 +343,7 @@ export default function SceneRoot() {
       }
       lastMovementTimeRef.current = null;
     };
-  }, [applyPropMovement]);
+  }, []);
 
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);

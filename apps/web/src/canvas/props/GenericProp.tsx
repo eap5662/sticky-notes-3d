@@ -124,6 +124,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
             vAxis: surface.vAxis as Vec3,
             baseSurfaceId: surf.id,
             shape: debug.shape,
+            quality: debug.quality,
           });
         },
       };

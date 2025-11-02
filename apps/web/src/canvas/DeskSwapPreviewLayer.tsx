@@ -164,6 +164,7 @@ function GhostGLTF({ entry, position, rotation, scale }: GhostGLTFProps) {
             vAxis: surface.vAxis,
             baseSurfaceId: surfaceConfig.id,
             shape: debug.shape,
+            quality: debug.quality,
           },
         };
       } catch (err) {

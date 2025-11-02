@@ -42,6 +42,7 @@ export function useRegisterSurface(params: {
         uAxis: surface.uAxis,
         vAxis: surface.vAxis,
         shape: debug.shape,
+        quality: debug.quality,
       });
       onExtract?.(debug);
     } catch (err) {
@@ -78,6 +79,7 @@ export function useRegisterSurface(params: {
             uAxis: surface.uAxis,
             vAxis: surface.vAxis,
             shape: debug.shape,
+            quality: debug.quality,
           });
           onExtract?.(debug);
         } catch (err) {

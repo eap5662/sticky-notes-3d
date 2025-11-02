@@ -144,6 +144,11 @@ export function useDockConstraints() {
       const placement = solveDockPlacementForProp(prop, context);
 
       if (placement && shouldUpdateProp(prop, placement.position, placement.rotation)) {
+        console.info('[DockConstraints][update]', {
+          propId: prop.id,
+          position: placement.position,
+          rotation: placement.rotation,
+        });
         setGenericPropPosition(prop.id, placement.position);
         setGenericPropRotation(prop.id, placement.rotation);
       }

@@ -46,6 +46,12 @@ The codebase recently underwent a major refactor migrating from hardcoded desk/m
 - Reprojection logic does not reliably keep undocked props on the new desk; they may float or clip. Docked props can slip beneath the surface when surface metadata is sparse.
 - Until the remap solver matures, expect to fine-tune placement manually after swap or abort the swap entirely.
 
+### ⚠️ Outstanding Issues (January 2027)
+
+- **Initial swap height drift on Grey / Tan desks.** Swapping from the default L-desk to either the Grey Computer Desk or Tan Desk still places props a few centimetres above/below the surface. Subsequent swaps work as expected once the new desk’s surface metadata loads. Root cause: the first remap runs before the replacement desk has emitted its surface meta.
+- **Undo mirrors the incorrect height.** Until the height drift above is fixed, undo simply restores the inaccurate placement produced by the first swap.
+- **No “Force” button in UI.** The store exposes a `{ force: true }` path (hotkey escape hatch), but there is no “Force” button in the panel. Documentation and guards should refer to the actual controls (“Complete”, “Cancel”).
+
 ---
 
 ## ⚠️ Desk Surface “Hidden Mirror” Workaround (February 2026)

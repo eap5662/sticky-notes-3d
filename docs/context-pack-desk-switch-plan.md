@@ -96,3 +96,12 @@ Uses the same normalized data to render the red outline/fill. If the visual over
 4. Keep the docking guardrail intact; the swap code should piggyback on those helpers rather than re-implementing them.
 
 With this context, a new agent can dive straight into desk-switch implementation while avoiding the hidden mirror and preserving prop layout.***
+
+---
+
+## 7. Current Gaps / Known Issues (January 2027)
+
+- **Initial swap height drift (Grey / Tan desks).** Swapping from the default L-desk to the *Grey Computer Desk* or *Tan Desk* still positions props several centimetres above/below the surface. Subsequent swaps behave, which suggests the remap runs before the new desk’s surface metadata is registered. A post-swap reconcile hook (or a completion gate that waits for metadata) is still required.
+- **No UX guard while surfaces load.** Because the swap completes immediately, users never see a “surfaces still loading” message; we silently reuse stale lift/UV data. A future fix should either block completion until metas exist or automatically reproject once they appear.
+- **Undo mirrors the inaccurate placement.** Undo faithfully restores the coordinates produced by the first swap—so it currently preserves the incorrect height. Once the height bug is resolved, double-check that snapshots are refreshed after the post-load reconcile.
+- **Force path references.** The store exposes an optional `{ force: true }` escape hatch (used by hotkeys) but the UI does not present a “Force” button. When documenting or guarding the flow, refer to the actual controls (“Complete”, “Cancel”) to avoid confusion.

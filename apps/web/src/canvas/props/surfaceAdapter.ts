@@ -39,6 +39,7 @@ export type SurfaceDebugInfo = {
   vDir: THREE.Vector3;
   localBounds: THREE.Box3;
   shape: SurfaceShape;
+  quality: 'provisional' | 'confirmed';
 };
 
 export type SurfaceExtractResult = {
@@ -261,6 +262,7 @@ export function extractSurfaceFromNode(
   };
 
   // Attempt automatic polygon extraction from geometry.
+  let extractedPolygon = false;
   if (opts.extractPolygon !== false) {
     const params = { ...DEFAULT_EXTRACTION_PARAMS, ...opts.polygonParams };
     const polygonRings = extractPolygonFromNode(
@@ -277,6 +279,7 @@ export function extractSurfaceFromNode(
         outerPoints: polygonRings.outer.length,
         holes: polygonRings.holes.length,
       });
+      extractedPolygon = true;
       shape = {
         type: 'polygon',
         points: polygonRings.outer,
@@ -296,7 +299,16 @@ export function extractSurfaceFromNode(
     vDir,
     localBounds: boundsLocal.clone(),
     shape,
+    quality: extractedPolygon || opts.extractPolygon === false ? 'confirmed' : 'provisional',
   };
+
+  console.info('[surfaceAdapter] extractSurfaceFromNode result', {
+    nodeName: node.name,
+    surfaceId: id,
+    kind,
+    quality: debug.quality,
+    shapeType: shape.type,
+  });
 
   return { surface, debug };
 }

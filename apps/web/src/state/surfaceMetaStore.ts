@@ -29,6 +29,7 @@ export type SurfaceMeta = {
   uAxis?: Vec3;
   vAxis?: Vec3;
   shape?: SurfaceShape;
+  quality?: 'provisional' | 'confirmed';
 };
 
 const metaRegistry = new Map<SurfaceId, SurfaceMeta>();
@@ -83,16 +84,39 @@ function metaEquals(a: SurfaceMeta | undefined, b: SurfaceMeta) {
     optionalVecEquals(a.origin, b.origin) &&
     optionalVecEquals(a.uAxis, b.uAxis) &&
     optionalVecEquals(a.vAxis, b.vAxis) &&
-    shapeEquals(a.shape, b.shape)
+    shapeEquals(a.shape, b.shape) &&
+    a.quality === b.quality
   );
 }
 
 export function setSurfaceMeta(id: SurfaceId, meta: SurfaceMeta) {
   const existing = metaRegistry.get(id);
+  const logPrefix = `[surfaceMetaStore:set] ${String(id)} owner=${meta.ownerId ?? 'none'} base=${meta.baseSurfaceId ?? 'none'}`;
+  console.info(logPrefix, {
+    incomingQuality: meta.quality ?? 'unknown',
+    incomingShape: meta.shape?.type ?? 'none',
+    existingQuality: existing?.quality ?? 'none',
+    existingShape: existing?.shape?.type ?? 'none',
+  });
+  const shouldReplace =
+    !existing ||
+    existing.quality !== 'confirmed' ||
+    meta.quality === 'confirmed';
+
+  if (!shouldReplace) {
+    console.info(`${logPrefix} :: SKIP (existing confirmed, incoming provisional)`);
+    return;
+  }
+
   if (existing) {
     clearCanonicalSampler(existing);
   }
+
   metaRegistry.set(id, meta);
+  console.info(`${logPrefix} :: APPLIED`, {
+    storedQuality: meta.quality ?? 'unknown',
+    storedShape: meta.shape?.type ?? 'none',
+  });
   if (!metaEquals(existing, meta)) {
     notify();
   }
