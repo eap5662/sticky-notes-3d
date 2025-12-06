@@ -4,67 +4,153 @@ import { setGenericPropUniformScale, type Vec3 } from '@/state/genericPropsStore
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import { useUndoHistoryStore } from '@/state/undoHistoryStore';
+import { PROP_CATALOG } from '@/data/propCatalog';
 
-const MIN_SCALE = 0.6;
-const MAX_SCALE = 1.6;
+const MIN_USER_SCALE = 0.01; // Minimum user-visible scale (0.01x)
+const MAX_USER_SCALE = 3.0; // Maximum user-visible scale (3.0x)
 const STEP = 0.01;
 
 type PropScaleControlsProps = {
   className?: string;
+  overrideSelectionId?: string | null;
 };
 
 type GenericTarget = {
   type: 'generic';
   id: string;
+  catalogId?: string;
   label: string;
   description: string;
   scale: number;
+  defaultScale: number;
   status: 'editing' | 'dragging' | 'placed';
 };
 
-export default function PropScaleControls({ className = '' }: PropScaleControlsProps = {}) {
+export default function PropScaleControls({ className = '', overrideSelectionId }: PropScaleControlsProps = {}) {
   const selection = useSelection();
-  const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
+  const selectedGenericId = overrideSelectionId !== undefined
+    ? overrideSelectionId
+    : (selection && selection.kind === 'generic' ? selection.id : null);
   const selectedGeneric = useGenericProp(selectedGenericId);
   const pushAction = useUndoHistoryStore((s) => s.push);
 
   const target = useMemo<GenericTarget | null>(() => {
     if (!selectedGeneric) return null;
+
+    // Get defaultScale from catalog
+    const catalogEntry = selectedGeneric.catalogId
+      ? PROP_CATALOG.find(entry => entry.id === selectedGeneric.catalogId)
+      : null;
+    const defaultScale = catalogEntry?.defaultScale ?? 1;
+
     return {
       type: 'generic',
       id: selectedGeneric.id,
+      catalogId: selectedGeneric.catalogId,
       label: selectedGeneric.label ?? 'Prop',
       description: selectedGeneric.label ? `${selectedGeneric.label} (Generic)` : 'Generic prop',
       scale: selectedGeneric.scale[0],
+      defaultScale,
       status: selectedGeneric.status,
     };
   }, [selectedGeneric]);
-  const [pendingValue, setPendingValue] = useState(target?.scale ?? 1);
+  // Store the user-visible normalized scale (relative to defaultScale)
+  const [pendingValue, setPendingValue] = useState(1);
+  // Store raw input string to allow typing "0.", "0.0", etc.
+  const [inputValue, setInputValue] = useState('1');
+  const [isFocused, setIsFocused] = useState(false);
   const scaleBeforeRef = useRef<Vec3 | null>(null);
 
   const targetKey = target ? `${target.type}:${target.id}` : null;
 
+  // Helper to format display value (clean, no trailing zeros)
+  const formatDisplayValue = useCallback((value: number): string => {
+    // Round to 3 decimals, then convert to string and remove trailing zeros
+    const rounded = Number(value.toFixed(3));
+    return rounded.toString(); // Auto removes trailing zeros
+  }, []);
+
   useEffect(() => {
-    if (target) {
-      setPendingValue(target.scale);
+    if (target && !isFocused) {
+      // Only update display when not focused (don't interfere with typing)
+      // Convert absolute scale to normalized (user-visible) scale
+      const normalizedScale = target.scale / target.defaultScale;
+      const rounded = Number(normalizedScale.toFixed(3));
+      setPendingValue(rounded);
+      setInputValue(formatDisplayValue(rounded));
     }
-  }, [target?.scale, targetKey]);
+  }, [target?.scale, target?.defaultScale, targetKey, isFocused, formatDisplayValue]);
 
   const handleScaleChange = useCallback(
-    (next: number) => {
+    (userScale: number) => {
       if (!target) return;
-      setPendingValue(next);
-      const normalized = Number(next.toFixed(3));
+      // Clamp user input between MIN_USER_SCALE and MAX_USER_SCALE
+      const clampedUser = Math.max(MIN_USER_SCALE, Math.min(MAX_USER_SCALE, userScale));
+      setPendingValue(clampedUser);
+
+      // Convert user scale to absolute scale by multiplying with defaultScale
+      const absoluteScale = clampedUser * target.defaultScale;
+      const normalized = Number(absoluteScale.toFixed(4));
+
       setGenericPropUniformScale(target.id, normalized);
     },
     [target],
   );
 
+  const handlePointerDown = useCallback(() => {
+    if (!selectedGeneric) return;
+    scaleBeforeRef.current = selectedGeneric.scale;
+  }, [selectedGeneric]);
+
+  const handleInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (!target) return;
+      const value = event.target.value;
+
+      // Always update the raw input value to allow typing
+      setInputValue(value);
+
+      // Allow empty input during typing
+      if (value === '') {
+        setPendingValue(0);
+        return;
+      }
+
+      // Parse the value - if valid, update pending scale
+      const parsed = parseFloat(value);
+      if (!isNaN(parsed) && parsed >= 0) {
+        setPendingValue(parsed);
+      }
+    },
+    [target],
+  );
+
+  const handleInputFocus = useCallback((event: React.FocusEvent<HTMLInputElement>) => {
+    setIsFocused(true);
+    handlePointerDown();
+    // Select all text so user can replace with one keystroke
+    event.target.select();
+  }, [handlePointerDown]);
+
+  const handleInputBlur = useCallback(() => {
+    setIsFocused(false);
+    if (!target) return;
+    // On blur, apply the scale and ensure we have a valid value
+    let finalValue = pendingValue;
+    if (finalValue < MIN_USER_SCALE || isNaN(finalValue)) {
+      finalValue = 1; // Reset to normalized 1x (which is the defaultScale)
+    }
+    handleScaleChange(finalValue);
+    // Update input to show clean formatted value (no trailing zeros)
+    setInputValue(formatDisplayValue(finalValue));
+  }, [target, pendingValue, handleScaleChange, formatDisplayValue]);
+
   const handleReset = useCallback(() => {
     if (!target || !selectedGeneric) return;
     const before = selectedGeneric.scale;
-    const after: Vec3 = [1, 1, 1];
-    setGenericPropUniformScale(target.id, 1);
+    // Reset to defaultScale (which appears as 1x to user)
+    const after: Vec3 = [target.defaultScale, target.defaultScale, target.defaultScale];
+    setGenericPropUniformScale(target.id, target.defaultScale);
     pushAction({
       type: 'scale',
       propId: target.id,
@@ -72,11 +158,6 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
       after,
     });
   }, [target, selectedGeneric, pushAction]);
-
-  const handlePointerDown = useCallback(() => {
-    if (!selectedGeneric) return;
-    scaleBeforeRef.current = selectedGeneric.scale;
-  }, [selectedGeneric]);
 
   const handlePointerUp = useCallback(() => {
     if (!target || !selectedGeneric || !scaleBeforeRef.current) return;
@@ -95,56 +176,98 @@ export default function PropScaleControls({ className = '' }: PropScaleControlsP
     scaleBeforeRef.current = null;
   }, [target, selectedGeneric, pushAction]);
 
-  const containerClass = ['pointer-events-none flex flex-col items-end gap-2', className]
-    .filter(Boolean)
-    .join(' ');
+  // Calculate isDocked before using it in callbacks
+  const isDocked = target?.status === 'editing' ? false : selectedGeneric?.docked ?? false;
 
-  if (!target) return null;
-
-  const isDocked = target.status === 'editing' ? false : selectedGeneric?.docked ?? false;
-  const sliderClass = isDocked ? "mt-2 w-full opacity-40 cursor-not-allowed" : "mt-2 w-full";
+  const handleSliderChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (!target || isDocked) return;
+      const scale = parseFloat(event.target.value);
+      handleScaleChange(scale);
+      setInputValue(formatDisplayValue(scale));
+    },
+    [target, isDocked, handleScaleChange, formatDisplayValue]
+  );
+  const inputClass = isDocked
+    ? "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white opacity-40 cursor-not-allowed [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+    : "mt-2 w-full rounded border border-white/30 bg-black/50 px-3 py-2 text-sm text-white focus:border-white/50 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
   const resetButtonClass = isDocked
     ? "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide opacity-40 cursor-not-allowed"
     : "rounded border border-white/30 px-2 py-1 text-[10px] uppercase tracking-wide hover:bg-white/10";
 
+  if (!target) return null;
+
   return (
-    <div className={containerClass}>
-      <div className="pointer-events-auto w-60 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
+    <div className="pointer-events-auto w-60 rounded-md bg-black/70 p-3 text-sm text-white shadow-lg">
         <div className="text-xs uppercase tracking-wide text-white/70">Adjusting</div>
         <div className="mt-1 font-semibold">{target.label}</div>
         <div className="text-xs text-white/60">{target.description}</div>
 
         <div className="mt-4">
           <div className="flex items-center justify-between text-xs uppercase tracking-wide text-white/70">
-            <span>Scale</span>
-            <span>{pendingValue.toFixed(2)}x</span>
+            <span>Scale Multiplier</span>
           </div>
+
+          {/* Linear Slider */}
+          <div className="mt-3 relative">
+            <input
+              type="range"
+              min={MIN_USER_SCALE}
+              max={MAX_USER_SCALE}
+              step={STEP}
+              value={pendingValue}
+              onChange={handleSliderChange}
+              onPointerDown={handlePointerDown}
+              onPointerUp={handlePointerUp}
+              disabled={isDocked}
+              className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${
+                isDocked
+                  ? 'opacity-40 cursor-not-allowed bg-white/10'
+                  : 'bg-white/20'
+              } [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-lg`}
+            />
+            {/* Tick marks */}
+            <div className="mt-1 flex justify-between text-[9px] text-white/40 px-0.5">
+              <span>0.01×</span>
+              <span>1×</span>
+              <span>2×</span>
+              <span>3×</span>
+            </div>
+          </div>
+
+          {/* Number Input */}
           <input
-            type="range"
-            min={MIN_SCALE}
-            max={MAX_SCALE}
+            type="number"
+            min={MIN_USER_SCALE}
+            max={MAX_USER_SCALE}
             step={STEP}
-            value={pendingValue}
-            onChange={(event) => !isDocked && handleScaleChange(Number(event.target.value))}
-            onPointerDown={!isDocked ? handlePointerDown : undefined}
-            onPointerUp={!isDocked ? handlePointerUp : undefined}
+            value={inputValue}
+            onChange={!isDocked ? handleInputChange : undefined}
+            onBlur={!isDocked ? handleInputBlur : undefined}
+            onFocus={!isDocked ? handleInputFocus : undefined}
+            onKeyDown={(e) => {
+              // Allow Enter to apply immediately
+              if (e.key === 'Enter' && !isDocked) {
+                handleInputBlur();
+                e.currentTarget.blur();
+              }
+            }}
             disabled={isDocked}
-            className={sliderClass}
+            className={inputClass}
+            placeholder="1"
           />
           <div className="mt-2 flex items-center justify-between text-[11px] text-white/60">
-            <span>{MIN_SCALE.toFixed(1)}x</span>
+            <span className="text-white/40">Range: 0.01x - 3.0x</span>
             <button
               type="button"
               className={resetButtonClass}
               onClick={isDocked ? undefined : handleReset}
               disabled={isDocked}
             >
-              Reset
+              Reset to 1x
             </button>
-            <span>{MAX_SCALE.toFixed(1)}x</span>
           </div>
         </div>
-      </div>
     </div>
   );
 }

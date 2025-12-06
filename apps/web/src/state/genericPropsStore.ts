@@ -1,12 +1,31 @@
 import type { AnchorConfig } from '@/canvas/props/GLTFProp';
+import type { SurfaceId } from '@/canvas/surfaces';
 
 export type GenericPropId = string;
 export type GenericPropStatus = 'editing' | 'dragging' | 'placed';
 export type Vec3 = [number, number, number];
+export type Vec2 = [number, number];
 
 export type GenericPropBounds = {
   min: Vec3;
   max: Vec3;
+};
+
+export type GenericPropSnapshot = {
+  id: string;
+  catalogId: string;
+  label?: string;
+  url: string;
+  anchor?: AnchorConfig;
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  status: GenericPropStatus;
+  docked: boolean;
+  locked: boolean;
+  dockOffset?: DockOffset;
+  dockState: DockState;
+  dockAttachment?: DockAttachment;
 };
 
 export type DockOffset = {
@@ -14,6 +33,43 @@ export type DockOffset = {
   depth: number;    // offset along desk.forward axis (meters)
   lift: number;     // offset along desk.up axis (meters)
   yaw: number;      // rotation relative to desk.forward (radians)
+};
+
+export type DockState = 'free' | 'attached' | 'floating' | 'pending';
+
+export type CanonicalSnapshotPlain = {
+  sampleCount: number;
+  samples: Vec2[];
+  weights: number[];
+};
+
+export type SurfaceSnapshot =
+  | {
+      type: 'rect';
+      width: number;
+      height: number;
+      canonical?: CanonicalSnapshotPlain;
+    }
+  | {
+      type: 'polygon';
+      points: Vec2[];
+      obb?: {
+        center: Vec2;
+        right: Vec2;
+        up: Vec2;
+        extents: Vec2;
+      };
+      canonical?: CanonicalSnapshotPlain;
+    };
+
+export type DockAttachment = {
+  deskInstanceId: GenericPropId;
+  surfaceId: SurfaceId | string;
+  offsetUV: { u: number; v: number };
+  lift: number;
+  yawRel: number;
+  sticky?: boolean;
+  surfaceSnapshot?: SurfaceSnapshot;
 };
 
 export type GenericProp = {
@@ -27,9 +83,12 @@ export type GenericProp = {
   rotation: Vec3;
   scale: Vec3;
   status: GenericPropStatus;
+  locked: boolean;
   bounds?: GenericPropBounds;
   docked: boolean;
   dockOffset?: DockOffset;
+  dockState: DockState;
+  dockAttachment?: DockAttachment;
 };
 
 type GenericPropBlueprint = {
@@ -39,6 +98,8 @@ type GenericPropBlueprint = {
   anchor?: AnchorConfig;
   position?: Vec3;
   rotation?: Vec3;
+  scale?: Vec3;
+  locked?: boolean;
 };
 
 type Subscriber = () => void;
@@ -53,6 +114,85 @@ let idCounter = 1;
 
 function cloneVec(vec: Vec3): Vec3 {
   return [vec[0], vec[1], vec[2]];
+}
+
+function cloneDockAttachmentInternal(attachment: DockAttachment): DockAttachment {
+  return {
+    ...attachment,
+    offsetUV: { ...attachment.offsetUV },
+    surfaceSnapshot: attachment.surfaceSnapshot
+      ? attachment.surfaceSnapshot.type === 'rect'
+        ? {
+            ...attachment.surfaceSnapshot,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
+          }
+        : {
+            ...attachment.surfaceSnapshot,
+            points: attachment.surfaceSnapshot.points.map(([x, y]) => [x, y] as [number, number]),
+            obb: attachment.surfaceSnapshot.obb
+              ? {
+                  center: [...attachment.surfaceSnapshot.obb.center] as [number, number],
+                  right: [...attachment.surfaceSnapshot.obb.right] as [number, number],
+                  up: [...attachment.surfaceSnapshot.obb.up] as [number, number],
+                  extents: [...attachment.surfaceSnapshot.obb.extents] as [number, number],
+                }
+              : undefined,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
+          }
+      : undefined,
+  };
+}
+
+export function createSnapshotFromProp(prop: GenericProp): GenericPropSnapshot {
+  return {
+    id: prop.id,
+    catalogId: prop.catalogId ?? '',
+    label: prop.label,
+    url: prop.url,
+    anchor: prop.anchor,
+    position: [prop.position[0], prop.position[1], prop.position[2]],
+    rotation: [prop.rotation[0], prop.rotation[1], prop.rotation[2]],
+    scale: [prop.scale[0], prop.scale[1], prop.scale[2]],
+    status: prop.status,
+    docked: prop.docked,
+    locked: prop.locked,
+    dockOffset: prop.dockOffset ? { ...prop.dockOffset } : undefined,
+    dockState: prop.dockState,
+    dockAttachment: prop.dockAttachment ? cloneDockAttachmentInternal(prop.dockAttachment) : undefined,
+  };
+}
+
+export function applySnapshotToProp(snapshot: GenericPropSnapshot) {
+  updateProp(snapshot.id, (prop) => {
+    return {
+      ...prop,
+      catalogId: snapshot.catalogId,
+      label: snapshot.label,
+      url: snapshot.url,
+      anchor: snapshot.anchor,
+      position: [snapshot.position[0], snapshot.position[1], snapshot.position[2]],
+      rotation: [snapshot.rotation[0], snapshot.rotation[1], snapshot.rotation[2]],
+      scale: [snapshot.scale[0], snapshot.scale[1], snapshot.scale[2]],
+      status: snapshot.status,
+      docked: snapshot.docked,
+      locked: snapshot.locked,
+      dockOffset: snapshot.dockOffset ? { ...snapshot.dockOffset } : undefined,
+      dockState: snapshot.dockState,
+      dockAttachment: snapshot.dockAttachment ? cloneDockAttachmentInternal(snapshot.dockAttachment) : undefined,
+    };
+  });
 }
 
 function emit(next: GenericProp[]) {
@@ -89,6 +229,8 @@ function normalizeBlueprint(blueprint: GenericPropBlueprint) {
     anchor: blueprint.anchor,
     position: blueprint.position ? cloneVec(blueprint.position) : cloneVec(STAGING_POSITION),
     rotation: blueprint.rotation ? cloneVec(blueprint.rotation) : cloneVec(DEFAULT_ROTATION),
+    scale: blueprint.scale ? cloneVec(blueprint.scale) : cloneVec(DEFAULT_SCALE),
+    locked: blueprint.locked ?? false,
   };
 }
 
@@ -113,10 +255,13 @@ export function spawnGenericProp(blueprint: GenericPropBlueprint): GenericProp {
     anchor: normalized.anchor,
     position: normalized.position,
     rotation: normalized.rotation,
-    scale: cloneVec(DEFAULT_SCALE),
+    scale: normalized.scale,
     status: 'dragging',
+    locked: normalized.locked,
     docked: false,
     dockOffset: undefined,
+    dockState: 'free',
+    dockAttachment: undefined,
   };
 
   emit([...propsState, newProp]);
@@ -129,6 +274,15 @@ export function setGenericPropStatus(id: GenericPropId, status: GenericPropStatu
       return prop;
     }
     return { ...prop, status };
+  });
+}
+
+export function setGenericPropLocked(id: GenericPropId, locked: boolean) {
+  updateProp(id, (prop) => {
+    if (prop.locked === locked) {
+      return prop;
+    }
+    return { ...prop, locked };
   });
 }
 
@@ -207,13 +361,16 @@ function degToRad(deg: number) {
   return (deg * Math.PI) / 180;
 }
 
-export function rotateGenericProp(id: GenericPropId, deltaYDeg: number) {
+export function rotateGenericProp(id: GenericPropId, deltaYDeg: number): Vec3 {
+  let newRotation: Vec3 = [0, 0, 0];
   updateProp(id, (prop) => {
     const currentYRad = prop.rotation[1];
     const deltaYRad = degToRad(deltaYDeg);
     const nextYRad = wrapRadians(currentYRad + deltaYRad);
-    return { ...prop, rotation: [prop.rotation[0], nextYRad, prop.rotation[2]] };
+    newRotation = [prop.rotation[0], nextYRad, prop.rotation[2]] as Vec3;
+    return { ...prop, rotation: newRotation };
   });
+  return newRotation;
 }
 
 export function getGenericPropRotationDeg(id: GenericPropId): number {
@@ -247,6 +404,7 @@ export function dockPropWithOffset(id: GenericPropId, offset: DockOffset) {
     ...prop,
     docked: true,
     dockOffset: offset,
+    dockState: 'attached',
   }));
 }
 
@@ -255,6 +413,8 @@ export function undockProp(id: GenericPropId) {
     ...prop,
     docked: false,
     dockOffset: undefined,
+    dockAttachment: undefined,
+    dockState: 'free',
   }));
 }
 
@@ -272,6 +432,51 @@ export function setDockOffset(id: GenericPropId, offset: DockOffset) {
       return prop;
     }
     return { ...prop, dockOffset: offset };
+  });
+}
+
+export function dockPropWithAttachment(id: GenericPropId, attachment: DockAttachment) {
+  updateProp(id, (prop) => ({
+    ...prop,
+    docked: true,
+    dockOffset: prop.dockOffset,
+    dockAttachment: cloneDockAttachmentInternal(attachment),
+    dockState: 'attached',
+  }));
+}
+
+export function floatDockedProp(id: GenericPropId) {
+  updateProp(id, (prop) => {
+    if (prop.dockState === 'floating' && !prop.docked) {
+      return prop;
+    }
+    return {
+      ...prop,
+      docked: false,
+      dockState: 'floating',
+    };
+  });
+}
+
+export function setDockAttachment(id: GenericPropId, attachment: DockAttachment | undefined) {
+  updateProp(id, (prop) => {
+    if (prop.dockAttachment === attachment) {
+      return prop;
+    }
+    return {
+      ...prop,
+      dockAttachment: attachment ? cloneDockAttachmentInternal(attachment) : undefined,
+      dockState: attachment ? 'attached' : prop.dockState,
+    };
+  });
+}
+
+export function setDockState(id: GenericPropId, state: DockState) {
+  updateProp(id, (prop) => {
+    if (prop.dockState === state) {
+      return prop;
+    }
+    return { ...prop, dockState: state };
   });
 }
 

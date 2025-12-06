@@ -37,5 +37,7 @@ export function clearSelection() {
 
 export function subscribeSelection(listener: Subscriber) {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }

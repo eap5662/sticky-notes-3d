@@ -11,20 +11,26 @@ import {
   type GenericProp,
 } from '@/state/genericPropsStore';
 import { clearSelection, setSelection } from '@/state/selectionStore';
-import { useSurface, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
+import { useSurface, useSurfaceMeta, useSurfacesByKind } from '@/canvas/hooks/useSurfaces';
 import { planeProject } from '@/canvas/math/plane';
 import { lockCameraOrbit, unlockCameraOrbit } from '@/state/cameraInteractionStore';
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { PROP_CATALOG } from '@/data/propCatalog';
 import { setSurfaceMeta } from '@/state/surfaceMetaStore';
+import { createSurfaceId } from '@/canvas/surfaces';
+import type { SurfaceExtractResult } from '@/canvas/props/surfaceAdapter';
 import { useLayoutFrame } from '@/canvas/hooks/useLayoutFrame';
 import { useUndoHistoryStore } from '@/state/undoHistoryStore';
 import type { Vec3 } from '@/state/genericPropsStore';
 import { useGenericProps } from '@/canvas/hooks/useGenericProps';
 import { getDeskBounds } from '@/state/deskBoundsStore';
 import { pointInPolygon } from '@/canvas/math/polygon';
+import { isUVInsideSurface, projectPointToSurface } from '@/canvas/math/surfaceFrame';
 
 const DEFAULT_ANCHOR = { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } } as const;
+const DESK_CATALOG_IDS = new Set(
+  PROP_CATALOG.filter((entry) => entry.primaryCategory === 'desk').map((entry) => entry.id)
+);
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const TMP_PLANE = new THREE.Plane();
@@ -38,10 +44,11 @@ const HIGHLIGHT_MINOR_RADIUS_SCALE = 0.55;
 const HIGHLIGHT_MAJOR_RADIUS_SCALE = 1.1;
 const DESK_CLEARANCE = 0.015;
 const CLEARANCE_EPSILON = 1e-4;
-const DESK_DRIVE_BASE_SPEED = 0.002; // meters per frame when just outside stop radius
-const DESK_DRIVE_GAIN = 0.048; // additional speed per meter of pointer offset
-const DESK_DRIVE_MAX_STEP = 0.024; // cap desk travel per frame (~2.4cm)
+const DESK_DRIVE_BASE_SPEED = 0.0026; // meters per frame when just outside stop radius
+const DESK_DRIVE_GAIN = 0.055; // additional speed per meter of pointer offset
+const DESK_DRIVE_MAX_STEP = 0.028; // cap desk travel per frame (~2.8cm)
 const DESK_DRIVE_STOP_RADIUS = 0.02; // pointer within 2cm of center releases drag
+const SURFACE_LIFT_TOLERANCE = 0.05;
 
 type GenericPropInstanceProps = {
   prop: GenericProp;
@@ -52,10 +59,12 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const deskSurfaces = useSurfacesByKind('desk');
   const deskSurfaceId = deskSurfaces[0]?.id;
   const deskSurface = useSurface(deskSurfaceId ?? '');
+  const deskSurfaceMeta = useSurfaceMeta(deskSurfaceId ?? '');
+  const deskOwnerId = deskSurfaces[0]?.meta.ownerId ?? null;
 
   const layoutFrame = useLayoutFrame();
   const isActive = !!layoutFrame; // Active when desk exists
-  const canDrag = isActive && !!deskSurface && !prop.docked;
+  const canDrag = isActive && !!deskSurface && !prop.docked && !prop.locked;
 
   const selection = useSelection();
   const isSelected = selection?.kind === 'generic' && selection.id === prop.id;
@@ -78,8 +87,13 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   // Find desk prop for bounds checking
   const genericProps = useGenericProps();
   const deskProp = useMemo(() => {
-    return genericProps.find(p => p.catalogId === 'desk-default');
-  }, [genericProps]);
+    if (deskOwnerId) {
+      const byOwner = genericProps.find((p) => p.id === deskOwnerId);
+      if (byOwner) return byOwner;
+    }
+    return genericProps.find((p) => p.catalogId && DESK_CATALOG_IDS.has(p.catalogId)) ?? null;
+  }, [genericProps, deskOwnerId]);
+  const isDeskProp = deskOwnerId ? prop.id === deskOwnerId : !!(prop.catalogId && DESK_CATALOG_IDS.has(prop.catalogId));
 
   // Get surface config from catalog
   const catalogEntry = useMemo(() => {
@@ -88,24 +102,34 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
 
   const surfaceRegistrations = useMemo(() => {
     if (!catalogEntry?.surfaces) return undefined;
-    return catalogEntry.surfaces.map(surf => ({
-      id: surf.id,
-      kind: surf.kind,
-      nodeName: surf.nodeName,
-      options: surf.options,
-      onExtract: (info: ReturnType<typeof import('./surfaceAdapter').extractSurfaceFromNode>['debug']) => {
-        // Store surface metadata with kind
-        setSurfaceMeta(surf.id, {
-          center: toVec3(info.center),
-          normal: toVec3(info.normal),
-          uDir: toVec3(info.uDir),
-          vDir: toVec3(info.vDir),
-          extents: info.extents,
-          kind: surf.kind,
-        });
-      },
-    }));
-  }, [catalogEntry]);
+    return catalogEntry.surfaces.map(surf => {
+      const baseSurfaceId = String(surf.id);
+      const instanceSurfaceId = createSurfaceId(`${prop.id}:${baseSurfaceId}`);
+      return {
+        id: instanceSurfaceId,
+        kind: surf.kind,
+        nodeName: surf.nodeName,
+        options: surf.options,
+        onExtract: ({ surface, debug }: SurfaceExtractResult) => {
+          setSurfaceMeta(instanceSurfaceId, {
+            center: toVec3(debug.center),
+            normal: toVec3(debug.normal),
+            uDir: toVec3(debug.uDir),
+            vDir: toVec3(debug.vDir),
+            extents: debug.extents,
+            kind: surf.kind,
+            ownerId: prop.id,
+            origin: surface.origin as Vec3,
+            uAxis: surface.uAxis as Vec3,
+            vAxis: surface.vAxis as Vec3,
+            baseSurfaceId: surf.id,
+            shape: debug.shape,
+            quality: debug.quality,
+          });
+        },
+      };
+    });
+  }, [catalogEntry, prop.id]);
 
   useEffect(() => {
     return () => {
@@ -119,7 +143,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   }, [deskSurface]);
 
   useEffect(() => {
-    if (prop.catalogId !== 'desk-default') {
+    if (!isDeskProp) {
       deskCenterOffsetRef.current = null;
       deskCenterRef.current = null;
       return;
@@ -142,7 +166,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       deskCenterOffsetRef.current = [0, 0, 0] as Vec3;
       deskCenterRef.current = fallback;
     }
-  }, [prop.catalogId, prop.bounds, prop.position]);
+  }, [isDeskProp, prop.bounds, prop.position]);
 
   const propMinY = prop.bounds?.min[1] ?? null;
   const currentPositionY = prop.position[1];
@@ -157,7 +181,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   const computeIntersection = useCallback(
     (event: ThreeEvent<PointerEvent>) => {
       const ray = event.ray;
-      const isDesk = prop.catalogId === 'desk-default';
+      const isDesk = isDeskProp;
 
       // Don't project onto desk surface when dragging the desk itself (circular logic)
       if (deskSurface && !isDesk) {
@@ -172,13 +196,13 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       const worldPoint = ray.intersectPlane(TMP_PLANE, TMP_POINT);
       return worldPoint ? worldPoint.clone() : null;
     },
-    [deskSurface, prop.position, prop.catalogId],
+    [deskSurface, prop.position, isDeskProp],
   );
 
   const constrainHeight = useCallback(
     (next: THREE.Vector3) => {
       // Don't constrain desk height - only props ON the desk
-      if (prop.catalogId === 'desk-default') {
+      if (isDeskProp) {
         return next;
       }
 
@@ -193,7 +217,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       }
       return next;
     },
-    [deskHeight, propMinY, currentPositionY, prop.catalogId],
+    [deskHeight, propMinY, currentPositionY, isDeskProp],
   );
 
   const handlePointerDown = useCallback(
@@ -233,7 +257,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       dragActiveRef.current = true;
       pointerIdRef.current = event.pointerId;
       grabOffsetRef.current.set(prop.position[0], prop.position[1], prop.position[2]).sub(intersection);
-      if (prop.catalogId === 'desk-default') {
+      if (isDeskProp) {
         deskPointerPointRef.current = [intersection.x, intersection.y, intersection.z];
       }
 
@@ -247,7 +271,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         pointerCaptureTargetRef.current = null;
       }
     },
-    [computeIntersection, prop.id, prop.position, prop.status, prop.catalogId, canDrag, deskSurface],
+    [computeIntersection, prop.id, prop.position, prop.status, isDeskProp, canDrag, deskSurface],
   );
 
   const finishDrag = useCallback(
@@ -315,7 +339,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         return;
       }
 
-      if (prop.catalogId === 'desk-default') {
+      if (isDeskProp) {
         const current = latestPositionRef.current;
         const centerOffset = (deskCenterOffsetRef.current ?? [0, 0, 0]) as Vec3;
         const deskCenter = (deskCenterRef.current ??
@@ -374,7 +398,7 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         nextTuple[2] - pointerPoint.z,
       );
     },
-    [computeIntersection, prop.id, constrainHeight, prop.catalogId, finishDrag],
+    [computeIntersection, prop.id, constrainHeight, isDeskProp, finishDrag],
   );
 
   const handlePointerLeave = useCallback(
@@ -401,14 +425,29 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
       return pointInPolygon(propPoint2D, customBounds);
     }
 
-    // Fall back to UV bounds check (default behavior)
+    if (deskSurfaceMeta) {
+      const projection = projectPointToSurface(deskSurfaceMeta, prop.position);
+      if (projection) {
+        const inside = isUVInsideSurface(deskSurfaceMeta, projection.u, projection.v);
+        if (inside && Math.abs(projection.lift) <= SURFACE_LIFT_TOLERANCE) {
+          return true;
+        }
+        if (!inside && deskSurfaceMeta.shape?.type === 'polygon') {
+          return false;
+        }
+      } else if (deskSurfaceMeta.shape?.type === 'polygon') {
+        return false;
+      }
+    }
+
+    // Fall back to UV bounds check (default behavior) for rect surfaces
     const rayOriginY = (prop.bounds?.max[1] ?? prop.position[1]) + 1;
     TMP_RAY.origin.set(prop.position[0], rayOriginY, prop.position[2]);
     TMP_RAY.direction.set(0, -1, 0);
     const hit = planeProject(TMP_RAY, deskSurface);
     if (!hit.hit) return false;
     return hit.u >= 0 && hit.u <= 1 && hit.v >= 0 && hit.v <= 1;
-  }, [deskSurface, prop.bounds, prop.position, deskProp]);
+  }, [deskSurface, deskSurfaceMeta, prop.bounds, prop.position, deskProp]);
 
   useEffect(() => {
     if (!isSelected || prop.status !== 'dragging') return;
@@ -431,19 +470,22 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
   useEffect(() => {
     if (deskHeight !== null && prevDeskHeightRef.current !== null) {
       if (Math.abs(deskHeight - prevDeskHeightRef.current) > CLEARANCE_EPSILON) {
-        hasAdjustedHeightRef.current = false;
+        if (!prop.docked) {
+          hasAdjustedHeightRef.current = false;
+        }
       }
     }
     prevDeskHeightRef.current = deskHeight;
-  }, [deskHeight]);
+  }, [deskHeight, prop.docked]);
 
   useEffect(() => {
     // Don't auto-adjust desk height - only adjust props ON the desk
-    if (prop.catalogId === 'desk-default') return;
+    if (isDeskProp) return;
 
     if (deskHeight == null) return;
     if (!prop.bounds) return;
     if (!isOverDesk) return;
+    if (prop.docked) return;
     if (prop.status === 'dragging' && dragActiveRef.current) return;
 
     // Only adjust once when bounds first become available
@@ -466,11 +508,11 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
     // Note: prop.position and prop.bounds intentionally NOT in deps to avoid infinite loop
     // This effect runs once when conditions are met, then hasAdjustedHeightRef prevents re-runs
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deskHeight, isOverDesk, prop.id, prop.status, prop.catalogId]);
+  }, [deskHeight, isOverDesk, prop.id, prop.status, isDeskProp]);
 
   useEffect(() => {
     latestPositionRef.current = prop.position;
-    if (prop.catalogId === 'desk-default') {
+    if (isDeskProp) {
       const offset = deskCenterOffsetRef.current;
       if (offset) {
         deskCenterRef.current = [
@@ -480,10 +522,10 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         ] as Vec3;
       }
     }
-  }, [prop.position]);
+  }, [prop.position, isDeskProp]);
 
   useEffect(() => {
-    if (prop.catalogId !== 'desk-default') return;
+    if (!isDeskProp) return;
     if (prop.status !== 'dragging') return;
 
     const interval = window.setInterval(() => {
@@ -536,10 +578,10 @@ export function GenericPropInstance({ prop }: GenericPropInstanceProps) {
         nextTuple[1] - pointerPoint[1],
         nextTuple[2] - pointerPoint[2],
       );
-    }, 250);
+    }, 320);
 
     return () => window.clearInterval(interval);
-  }, [prop.catalogId, prop.status, finishDrag, prop.id]);
+  }, [isDeskProp, prop.status, finishDrag, prop.id]);
 
   const highlightData = useMemo(() => {
     if (!prop.bounds) {

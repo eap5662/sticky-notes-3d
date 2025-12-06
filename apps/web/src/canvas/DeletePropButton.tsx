@@ -3,12 +3,15 @@ import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
 import { deleteGenericProp } from '@/state/genericPropsStore';
 import { useCamera } from '@/state/cameraSlice';
-import { useUndoHistoryStore, type GenericPropSnapshot } from '@/state/undoHistoryStore';
+import { useUndoHistoryStore } from '@/state/undoHistoryStore';
+import { createSnapshotFromProp } from '@/state/genericPropsStore';
+import { useActiveDeskId } from '@/canvas/hooks/useDeskProp';
 
 export default function DeletePropButton() {
   const selection = useSelection();
   const selectedGenericId = selection && selection.kind === 'generic' ? selection.id : null;
   const selectedGeneric = useGenericProp(selectedGenericId);
+  const activeDeskId = useActiveDeskId();
 
   const setMode = useCamera((s) => s.setMode);
   const cameraMode = useCamera((s) => s.mode);
@@ -18,18 +21,7 @@ export default function DeletePropButton() {
     if (!selectedGeneric) return;
 
     // Capture snapshot for undo
-    const snapshot: GenericPropSnapshot = {
-      id: selectedGeneric.id,
-      catalogId: selectedGeneric.catalogId ?? '',
-      label: selectedGeneric.label,
-      url: selectedGeneric.url,
-      anchor: selectedGeneric.anchor,
-      position: selectedGeneric.position,
-      rotation: selectedGeneric.rotation,
-      scale: selectedGeneric.scale,
-      docked: selectedGeneric.docked,
-      dockOffset: selectedGeneric.dockOffset,
-    };
+    const snapshot = createSnapshotFromProp(selectedGeneric);
 
     // Push delete action to undo stack
     pushAction({
@@ -51,10 +43,10 @@ export default function DeletePropButton() {
   if (!selectedGeneric) return null;
 
   // Prevent desk deletion for now
-  const isDesk = selectedGeneric.catalogId === 'desk-default';
+  const isDesk = selectedGeneric.id === activeDeskId;
   const buttonClass = isDesk
-    ? 'pointer-events-auto rounded border border-red-600/30 bg-red-600/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-red-400/50 cursor-not-allowed'
-    : 'pointer-events-auto rounded border border-red-600/70 bg-red-600/70 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white hover:bg-red-600/90 transition-colors';
+    ? 'pointer-events-auto rounded-full border border-red-600/30 bg-red-600/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-400/50 cursor-not-allowed'
+    : 'pointer-events-auto rounded-full border border-red-600/70 bg-red-600/70 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white hover:bg-red-600/90 transition-colors';
 
   return (
     <button
@@ -62,6 +54,7 @@ export default function DeletePropButton() {
       className={buttonClass}
       onClick={isDesk ? undefined : handleDelete}
       disabled={isDesk}
+      style={{ marginTop: '0.95rem', marginLeft: '-6rem' }}
     >
       Delete Prop
     </button>

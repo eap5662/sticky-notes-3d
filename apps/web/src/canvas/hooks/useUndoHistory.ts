@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useUndoHistoryStore, type UndoAction } from '@/state/undoHistoryStore';
+import { useUndoHistoryStore, type UndoAction, type GenericPropSnapshot } from '@/state/undoHistoryStore';
 import { useUndoToastStore } from '@/state/undoToastStore';
 import {
   spawnGenericProp,
@@ -7,9 +7,84 @@ import {
   setGenericPropPosition,
   setGenericPropRotation,
   setGenericPropUniformScale,
+  setGenericPropStatus,
+  setGenericPropLocked,
   dockPropWithOffset,
+  dockPropWithAttachment,
+  setDockAttachment,
+  setDockState,
   undockProp,
+  applySnapshotToProp,
+  type DockAttachment,
 } from '@/state/genericPropsStore';
+import { setSelection } from '@/state/selectionStore';
+
+function cloneAttachment(attachment: DockAttachment | undefined) {
+  if (!attachment) return undefined;
+  return {
+    ...attachment,
+    offsetUV: { ...attachment.offsetUV },
+    surfaceSnapshot: attachment.surfaceSnapshot
+      ? attachment.surfaceSnapshot.type === 'rect'
+        ? {
+            ...attachment.surfaceSnapshot,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
+          }
+        : {
+            ...attachment.surfaceSnapshot,
+            points: attachment.surfaceSnapshot.points.map(([x, y]) => [x, y] as [number, number]),
+            obb: attachment.surfaceSnapshot.obb
+              ? {
+                  center: [...attachment.surfaceSnapshot.obb.center] as [number, number],
+                  right: [...attachment.surfaceSnapshot.obb.right] as [number, number],
+                  up: [...attachment.surfaceSnapshot.obb.up] as [number, number],
+                  extents: [...attachment.surfaceSnapshot.obb.extents] as [number, number],
+                }
+              : undefined,
+            canonical: attachment.surfaceSnapshot.canonical
+              ? {
+                  sampleCount: attachment.surfaceSnapshot.canonical.sampleCount,
+                  samples: attachment.surfaceSnapshot.canonical.samples.map(([x, y]) => [x, y] as [number, number]),
+                  weights: [...attachment.surfaceSnapshot.canonical.weights],
+                }
+              : undefined,
+          }
+      : undefined,
+  };
+}
+
+function remapAttachmentDeskId(attachment: DockAttachment | undefined, nextDeskId: string) {
+  const cloned = cloneAttachment(attachment);
+  if (!cloned) return undefined;
+  const prevDeskId = cloned.deskInstanceId;
+  cloned.deskInstanceId = nextDeskId;
+  const prefix = `${prevDeskId}:`;
+  if (cloned.surfaceId?.startsWith(prefix)) {
+    cloned.surfaceId = cloned.surfaceId.replace(prefix, `${nextDeskId}:`);
+  }
+  return cloned;
+}
+
+function remapSnapshotDeskId(snapshot: GenericPropSnapshot, nextDeskId: string): GenericPropSnapshot {
+  if (!snapshot.dockAttachment) {
+    return { ...snapshot };
+  }
+  const remappedAttachment = remapAttachmentDeskId(snapshot.dockAttachment, nextDeskId);
+  return {
+    ...snapshot,
+    dockAttachment: remappedAttachment,
+  };
+}
+
+function applyGenericSnapshot(snapshot: GenericPropSnapshot) {
+  applySnapshotToProp(snapshot);
+}
 
 function getActionLabel(action: UndoAction): string {
   switch (action.type) {
@@ -27,6 +102,8 @@ function getActionLabel(action: UndoAction): string {
       return 'docking';
     case 'undock':
       return 'undocking';
+    case 'desk-swap':
+      return 'desk swap';
     default:
       return 'action';
   }
@@ -50,13 +127,11 @@ function executeUndo(action: UndoAction) {
         anchor: snapshot.anchor,
         position: snapshot.position,
         rotation: snapshot.rotation,
+        scale: snapshot.scale,
+        locked: snapshot.locked,
       });
 
-      // Restore scale, dock state after spawn
-      setGenericPropUniformScale(restored.id, snapshot.scale[0]);
-      if (snapshot.docked && snapshot.dockOffset) {
-        dockPropWithOffset(restored.id, snapshot.dockOffset);
-      }
+      applySnapshotToProp({ ...snapshot, id: restored.id });
       break;
     }
 
@@ -80,10 +155,18 @@ function executeUndo(action: UndoAction) {
 
     case 'dock': {
       // Undo dock = restore previous state
-      if (action.beforeDocked && action.dockOffset) {
-        dockPropWithOffset(action.propId, action.dockOffset);
+      if (action.beforeDocked) {
+        if (action.dockAttachment) {
+          dockPropWithAttachment(action.propId, action.dockAttachment);
+        } else if (action.dockOffset) {
+          dockPropWithOffset(action.propId, action.dockOffset);
+        }
       } else {
         undockProp(action.propId);
+        setDockAttachment(action.propId, undefined);
+      }
+      if (action.beforeState) {
+        setDockState(action.propId, action.beforeState);
       }
       setGenericPropPosition(action.propId, action.beforePos);
       break;
@@ -91,10 +174,45 @@ function executeUndo(action: UndoAction) {
 
     case 'undock': {
       // Undo undock = restore docked state
-      if (action.beforeDocked && action.dockOffset) {
-        dockPropWithOffset(action.propId, action.dockOffset);
+      if (action.beforeDocked) {
+        if (action.dockAttachment) {
+          dockPropWithAttachment(action.propId, action.dockAttachment);
+        } else if (action.dockOffset) {
+          dockPropWithOffset(action.propId, action.dockOffset);
+        }
+      }
+      if (action.beforeState) {
+        setDockState(action.propId, action.beforeState);
       }
       setGenericPropPosition(action.propId, action.beforePos);
+      break;
+    }
+
+    case 'desk-swap': {
+      const { oldDesk, newDesk, attachments } = action;
+
+      deleteGenericProp(newDesk.id);
+
+      const restoredDesk = spawnGenericProp({
+        catalogId: oldDesk.catalogId,
+        label: oldDesk.label,
+        url: oldDesk.url,
+        anchor: oldDesk.anchor,
+        position: oldDesk.position,
+        rotation: oldDesk.rotation,
+        scale: oldDesk.scale,
+        locked: oldDesk.locked,
+      });
+      setGenericPropStatus(restoredDesk.id, 'placed');
+      setGenericPropUniformScale(restoredDesk.id, oldDesk.scale[0]);
+      setGenericPropLocked(restoredDesk.id, oldDesk.locked);
+
+      attachments.forEach((record) => {
+        const remapped = remapSnapshotDeskId(record.beforeSnapshot, restoredDesk.id);
+        applyGenericSnapshot(remapped);
+      });
+
+      setSelection({ kind: 'generic', id: restoredDesk.id });
       break;
     }
   }

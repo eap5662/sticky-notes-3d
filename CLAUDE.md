@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 🚨 RECENT MAJOR CHANGES (January 2025)
+## 🚨 RECENT MAJOR CHANGES (September 2025)
 
 **Migration to Generic Props System - IN PROGRESS**
 
@@ -34,6 +34,69 @@ The codebase recently underwent a major refactor migrating from hardcoded desk/m
 
 ---
 
+## 🔄 Desk Swap Preview & Active Desk Detection (October 2025)
+
+- Swap mode renders a ghost desk and attachment status rings via `DeskSwapPreviewLayer.tsx`. `deskSwapStore.complete()` now attempts to recompute attachments against the new desk, but mapping remains **experimental**—props may end up at incorrect heights or positions and sometimes drop below the surface. Treat current remapping as a best-effort heuristic, not production-ready logic.
+- `useDeskProp.ts` exposes `useActiveDeskId()` / `useActiveDeskProp()`. All desk-specific logic (layout frame, controls, drag hints, bounds marking, delete guard) should consume those helpers rather than checking `catalogId === 'desk-default'`.
+- While swap mode is active the catalog auto-opens, filters to desk entries, and greys out the currently active desk so you can’t re-select it. Look at `GenericPropControls.tsx` for the gating logic.
+- Layout controls now show a dedicated “Desk Controls” block for the selected desk (lock + replace). Non-desk props still show the docking UI.
+- The layout loading banner only appears while no frame has been resolved; swapping desks no longer leaves “Loading workspace…” stuck on screen.
+- **Known limitations (Nov 2025):**
+  - Ghost preview/summary cards only render while the desk remains selected. If selection clears, the UI feedback disappears even though swap mode is still active.
+- Reprojection logic does not reliably keep undocked props on the new desk; they may float or clip. Docked props can slip beneath the surface when surface metadata is sparse.
+- Until the remap solver matures, expect to fine-tune placement manually after swap or abort the swap entirely.
+
+### ⚠️ Outstanding Issues (January 2027)
+
+- **Initial swap height drift on Grey / Tan desks.** Swapping from the default L-desk to either the Grey Computer Desk or Tan Desk still places props a few centimetres above/below the surface. Subsequent swaps work as expected once the new desk’s surface metadata loads. Root cause: the first remap runs before the replacement desk has emitted its surface meta.
+- **Undo mirrors the incorrect height.** Until the height drift above is fixed, undo simply restores the inaccurate placement produced by the first swap.
+- **No “Force” button in UI.** The store exposes a `{ force: true }` path (hotkey escape hatch), but there is no “Force” button in the panel. Documentation and guards should refer to the actual controls (“Complete”, “Cancel”).
+
+---
+
+## ⚠️ Desk Surface “Hidden Mirror” Workaround (February 2026)
+
+Some desks provide surface polygons that mirror across the U/V axis when converted to normalized UVs. The overlay only draws the true polygon, but docking math historically allowed props to latch onto the mirrored half.
+
+**Current behaviour:**
+- `isUVInsideSurface` now normalizes against the projected U/V ranges (same ones the overlay uses).
+- If the check fails and the surface is a polygon, we treat the prop as off-desk—no rectangular fallback, no attachments recorded.
+- `GenericProp` and `LayoutControls` deliberately render the Dock button in the disabled state so users see the standard “Move prop over desk surface to dock” hint.
+- Attachments, swap remapping, and canonical sampling convert normalized UVs back through the shared helper before calling `unprojectFromSurface`.
+
+**Caveats:**
+- The hidden mirror still exists in surface-space coordinates; any new code that uses raw `shape.points` must normalize via `getSurfaceShapeInfo`/`normalizedUVToProjected`.
+- Visualization (fill mesh) scales using the actual projected span; if you swap in new desks and see stretching, revisit the polygon data, not the guardrail.
+- See `docs/desk-surface-hidden-mirror.md` for full context and guidelines.
+
+When extending the swap flow, make sure to update both the preview analysis (`deskSwapStore.setPreviewSurfaces`) and the summary panel so the gating logic stays in sync.
+
+---
+
+## 🆕 Hover Preview System (February 2025)
+
+We added a lightweight hover preview for catalog items so users can see a live GLB spin before spawning props.
+
+**Key Components:**
+- `apps/web/src/canvas/GenericPropControls.tsx`
+  - Tracks hover intent with a 180 ms delay (`hoverIntentRef`) so quick scrolls don’t spin up previews.
+  - Captures the hovered button’s `DOMRect` and keeps it updated via scroll/resize listeners.
+  - Mounts `<PropPreviewOverlay entry rect />` only while the catalog is open and a selection is active.
+- `apps/web/src/canvas/PropPreviewOverlay.tsx`
+  - Client component that positions a 220×180 tooltip beside the hovered button.
+  - Creates a dedicated Three.js renderer per hover, with guarded setup/teardown (`forceContextLoss`) to avoid exhausting WebGL contexts or touching the main scene renderer.
+  - Loads GLBs through a shared `GLTFLoader` configured with Draco + Meshopt decoders; cached `PreparedPreview` objects keep load times tiny for repeated hovers.
+  - Normalises each scene (uniform scale, centred origin) and orbits the camera around the prop’s bounding sphere centre so even wide or tall assets stay framed.
+  - Animation loop rotates the camera while keeping it focused on the stored centre; the mesh itself stays static, which prevents lopsided props from drifting out of view.
+
+**Implementation Notes:**
+- Hover overlay is pointer-transparent by default (`pointer-events-none`) so it doesn’t block scrolling or catalog interactions.
+- Renderer is only created when the overlay is visible; on unmount we call `forceContextLoss()` + `dispose()` to free the GL context immediately.
+- Preview panel reuses the same styling system as the top-right HUD (absolute positioned from `SceneRoot`), so pay attention to z-indices if you adjust HUD layers.
+- If you add new catalog entries with unusual proportions, the orbit camera automatically adapts based on bounding sphere, but you can tweak `distance = radius * 2.4` if you need tighter or looser framing.
+
+When extending this feature (e.g., adding metadata to the tooltip), keep the hover delay and context-management in mind—spawning multiple canvases simultaneously will bring back the “Too many active WebGL contexts” warning.
+
 ## Development Commands
 
 **Starting the development servers:**
@@ -43,6 +106,15 @@ pnpm dev:web
 
 # Backend server (Express)
 pnpm dev:server
+```
+
+**Prop onboarding (batch processing):**
+```bash
+# Analyze GLB files in /models folder
+pnpm props:analyze
+
+# Generate catalog entries from analysis
+pnpm props:generate
 ```
 
 **Building:**
@@ -139,15 +211,35 @@ SceneRoot reads layoutFrameStore → applies transforms to props
 ```
 
 #### 4. Camera System
-Two views with distinct behavior and clamps:
+**⚠️ CRITICAL: Read `docs/camera-system-technical-guide.md` for complete implementation details**
 
-- **Wide view**: Camera-controls orbits around the layout target (desk + monitor center), yaw ±45°, pitch -12° → 22°, dolly 2.7–4.8m.
-- **Screen view**: Focused orbit around the selected monitor surface center, yaw ±18°, pitch ±12°, dolly 1.0–2.2m.
+The camera system uses **spherical coordinates** (yaw, pitch, dolly) and maintains alignment with the desk's forward vector through dynamic calculations.
 
-**Controller:**
-- `CameraRigController.tsx`: Unified camera-controls rig that configures clamps per view, listens to `cameraSlice`, and animates transitions (`setLookAt`) when switching views.
-- Click monitor → enter Screen view (via existing surface detection).
-- Press Escape → return to Wide view.
+**Two Views:**
+- **Wide view**: Desk-aligned camera positioned in front of desk (where user sits), yaw ±45° around 90° (desk-forward aligned), pitch -12° → 50°, dolly 2.7–4.8m
+- **Screen view**: Monitor-perpendicular camera with **dynamic yaw clamps** (±30° around calculated screen-facing direction), pitch -30° → 45°, dolly 0.5–3.0m
+
+**Key Mechanisms:**
+- **Desk-relative alignment**: Camera yaw calculated from desk's forward vector using quaternion rotation around desk.up axis
+- **Dynamic clamps**: Screen view yaw constraints adapt to monitor orientation (centered around `solveScreenCamera()` result)
+- **Layout frame system**: Desk surface vectors transformed from local to world space via desk Y-rotation
+- **Separate yaw/pitch**: Yaw extracted from horizontal direction only (NOT full 3D direction) to prevent geometric distortion
+
+**Critical Files:**
+- `apps/web/src/camera/cameraViews.ts` - View configurations (static clamps, defaults, target resolvers)
+- `apps/web/src/canvas/Cameras/CameraRigController.tsx` - Applies clamps, handles transitions, implements dynamic screen clamps
+- `apps/web/src/canvas/hooks/useAutoLayout.ts` - Calculates desk frame and camera poses (`solveCamera`, `solveScreenCamera`)
+
+**Usage:**
+- Click monitor → enter Screen view (camera animates to screen-perpendicular position)
+- Press Escape → return to Wide view (camera returns to desk-aligned position)
+
+**See Technical Guide** for:
+- Complete spherical coordinate system explanation
+- How desk rotation updates camera alignment
+- Dynamic clamp calculation for screen view
+- Troubleshooting common camera issues
+- Data flow diagrams
 
 #### 5. Validation System
 `useLayoutValidation.ts` runs checks on every layout change:
@@ -161,19 +253,17 @@ Warnings logged to console; extensible via `onReport` callback.
 
 ### Important Constraints & Conventions
 
-#### Scaling System (Current Known Issue)
-**Status:** Desk scaling works; **monitor scaling is broken** (as of commit `0c48c7a`).
+#### Scaling System
+**Default Scale:**
+- Props can specify `defaultScale` in catalog (e.g., `defaultScale: 2` for 2x size)
+- Applied at spawn time in `GenericPropControls.tsx`
+- User can further adjust with scale controls (0x–100x via numeric input)
 
-**How Scaling Should Work:**
-1. User adjusts scale via `PropScaleControls` → updates `propScaleStore`
+**How Scaling Works:**
+1. User adjusts scale via `PropScaleControls` → updates `genericPropsStore`
 2. `GLTFProp` applies scale to inner group hierarchy (preserves anchor point)
-3. `useAutoLayout` detects non-unit scale and computes `scaledBounds` from initial bounds
-4. Monitor placement uses `scaledBounds` to recalculate vertical lift + centering
-
-**Current Bug:**
-- Monitor scaling doesn't preserve foot anchor correctly
-- Foot-anchor logic (lines 437-442 in `useAutoLayout.ts`) may be overcomplicated
-- Next work planned: "detaching monitor, scaling, reattaching"
+3. Scale stored as `Vec3` in prop state (uniform scaling: `[s, s, s]`)
+4. Scale controls use numeric input (not slider) for precision
 
 #### Surface Extraction Options
 When registering surfaces via `GLTFProp`:
@@ -193,29 +283,63 @@ Example:
 />
 ```
 
-#### Adding New Props
-To add a new prop (keyboard, lamp, etc.):
+#### Adding New Props (Automated Batch System)
 
-1. Create GLTF with named plane node for interactive surface (if applicable)
-2. Place model in `apps/web/public/models/`
-3. Create wrapper component extending `GLTFProp`:
-   ```tsx
-   export function KeyboardProp({ url, position, rotation, scale }) {
-     return (
-       <GLTFProp
-         url={url}
-         position={position}
-         rotation={rotation}
-         scale={scale}
-         anchor={{ type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } }}
-         propId="keyboard1"
-         registerSurfaces={[/* if needed */]}
-       />
-     );
+**Recommended Workflow:**
+1. **Prepare models**: Download GLB files (e.g., from poly.pizza), place in `apps/web/public/models/`
+2. **Optional - Add surfaces**: For props needing interactive surfaces (monitors, whiteboards), open in Blender and add named plane nodes:
+   - Screens: `ScreenPlane`, `ScreenSurface`, `MonitorSurfacePlane`
+   - Whiteboards: `WhiteBoardSurface`, `BoardSurface`
+   - Desks: `DeskTopPlane`, `DeskSurface`
+   - Must be actual mesh geometry (not Empty nodes), duplicate surface faces and parent to prop object
+3. **Configure surfaces**: Add entries to `prop-overrides.json` for props with surfaces:
+   ```json
+   {
+     "Monitor-large.glb": {
+       "surfaces": [{
+         "nodeName": "MonitorSurfacePlane",
+         "kind": "screen",
+         "normalSide": "positive"
+       }]
+     }
    }
    ```
-4. Extend `useAutoLayout()` to compute placement relative to layout frame
-5. Add to `PropId` union in `propBoundsStore.ts`
+4. **Run analysis**: `pnpm props:analyze` - scans models, detects surfaces, generates `generated/prop-analysis.json`
+5. **Generate catalog entries**: `pnpm props:generate` - creates TypeScript entries in `generated/prop-catalog-entries.ts`
+6. **Copy to catalog**: Copy generated entries to `apps/web/src/data/propCatalog.ts`
+7. **Test and adjust scales**: Spawn props in app, note which need `defaultScale` adjustments, update catalog
+8. **Mark approved**: Add filenames to `prop-approved.json` to skip in future analysis runs
+
+**Key Files:**
+- `scripts/analyze-props.ts` - GLB analysis script
+- `scripts/generate-catalog.ts` - Catalog code generator
+- `prop-overrides.json` - Manual surface configuration
+- `prop-approved.json` - Batch tracking (skip processed props)
+- `apps/web/src/data/propCatalog.ts` - Main prop catalog
+
+**Surface Kinds:**
+- `'desk'` - Horizontal work surfaces
+- `'screen'` - Vertical display surfaces (monitors)
+- `'wall'` - Vertical board surfaces (whiteboards)
+- `'monitor-arm'` - Monitor mounting surfaces
+
+**Node Naming Conventions:**
+- Pattern-based detection matches: `*Surface*`, `*Plane*`, `*Screen*`, `*Board*`
+- Surface nodes must have actual mesh geometry (Empties won't work - `surfaceAdapter.ts` requires `mesh.isMesh`)
+- Duplicate surface faces and parent to main object for clean hierarchy
+
+**Manual Prop Addition (Legacy - Not Recommended):**
+For one-off props, you can manually add to catalog:
+```tsx
+{
+  id: 'my-prop',
+  label: 'My Prop',
+  url: '/models/my-prop.glb',
+  anchor: { type: 'bbox', align: { x: 'center', y: 'min', z: 'center' } },
+  defaultScale: 1.5, // Optional: scale correction
+  surfaces: [/* optional */],
+}
+```
 
 ### File Organization Patterns
 

@@ -19,8 +19,9 @@ export function useRegisterSurface(params: {
   deps?: React.DependencyList; // pass if node's transform can change over time
   options?: SurfaceExtractOptions;
   onExtract?: (info: ReturnType<typeof extractSurfaceFromNode>['debug']) => void;
+  ownerId?: string;
 }) {
-  const { id, kind, node, deps = [], options, onExtract } = params;
+  const { id, kind, node, deps = [], options, onExtract, ownerId } = params;
 
   // Register once when node arrives (and on deps changes)
   React.useEffect(() => {
@@ -34,6 +35,14 @@ export function useRegisterSurface(params: {
         uDir: toVec3(debug.uDir),
         vDir: toVec3(debug.vDir),
         extents: debug.extents,
+        kind,
+        ownerId,
+        baseSurfaceId: id,
+        origin: surface.origin,
+        uAxis: surface.uAxis,
+        vAxis: surface.vAxis,
+        shape: debug.shape,
+        quality: debug.quality,
       });
       onExtract?.(debug);
     } catch (err) {
@@ -63,6 +72,14 @@ export function useRegisterSurface(params: {
             uDir: toVec3(debug.uDir),
             vDir: toVec3(debug.vDir),
             extents: debug.extents,
+            kind,
+            ownerId,
+            baseSurfaceId: id,
+            origin: surface.origin,
+            uAxis: surface.uAxis,
+            vAxis: surface.vAxis,
+            shape: debug.shape,
+            quality: debug.quality,
           });
           onExtract?.(debug);
         } catch (err) {

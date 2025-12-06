@@ -1,23 +1,10 @@
 import { create } from 'zustand';
-import type { Vec3, DockOffset } from './genericPropsStore';
-import type { AnchorConfig } from '@/canvas/props/GLTFProp';
+import type { Vec3, DockOffset, DockAttachment, DockState } from './genericPropsStore';
+import { createSnapshotFromProp, type GenericPropSnapshot } from './genericPropsStore';
 
 /**
  * Full snapshot of a generic prop's state for restoration after deletion
  */
-export type GenericPropSnapshot = {
-  id: string;
-  catalogId: string;
-  label?: string;
-  url: string;
-  anchor?: AnchorConfig;
-  position: Vec3;
-  rotation: Vec3;
-  scale: Vec3;
-  docked: boolean;
-  dockOffset?: DockOffset;
-};
-
 /**
  * Discriminated union of all undoable actions
  */
@@ -27,8 +14,54 @@ export type UndoAction =
   | { type: 'move'; propId: string; before: Vec3; after: Vec3 }
   | { type: 'rotate'; propId: string; before: Vec3; after: Vec3 }
   | { type: 'scale'; propId: string; before: Vec3; after: Vec3 }
-  | { type: 'dock'; propId: string; beforeDocked: boolean; afterDocked: boolean; beforePos: Vec3; afterPos: Vec3; dockOffset?: DockOffset }
-  | { type: 'undock'; propId: string; beforeDocked: boolean; afterDocked: boolean; beforePos: Vec3; afterPos: Vec3; dockOffset?: DockOffset };
+  | {
+      type: 'dock';
+      propId: string;
+      beforeDocked: boolean;
+      afterDocked: boolean;
+      beforePos: Vec3;
+      afterPos: Vec3;
+      dockOffset?: DockOffset;
+      dockAttachment?: DockAttachment;
+      beforeState?: DockState;
+      afterState?: DockState;
+    }
+  | {
+      type: 'undock';
+      propId: string;
+      beforeDocked: boolean;
+      afterDocked: boolean;
+      beforePos: Vec3;
+      afterPos: Vec3;
+      dockOffset?: DockOffset;
+      dockAttachment?: DockAttachment;
+      beforeState?: DockState;
+      afterState?: DockState;
+    }
+  | {
+      type: 'desk-swap';
+      oldDesk: GenericPropSnapshot;
+      newDesk: GenericPropSnapshot;
+      attachments: DeskSwapAttachmentSnapshot[];
+    };
+
+export type DeskSwapAttachmentSnapshot = {
+  propId: string;
+  beforeSnapshot: GenericPropSnapshot;
+  afterSnapshot: GenericPropSnapshot;
+  beforeDocked: boolean;
+  beforePosition: Vec3;
+  beforeRotation: Vec3;
+  beforeOffset?: DockOffset;
+  beforeAttachment?: DockAttachment;
+  beforeState: DockState;
+  afterDocked: boolean;
+  afterPosition: Vec3;
+  afterRotation: Vec3;
+  afterOffset?: DockOffset;
+  afterAttachment?: DockAttachment;
+  afterState: DockState;
+};
 
 type UndoHistoryState = {
   actions: UndoAction[];
@@ -71,3 +104,5 @@ export const useUndoHistoryStore = create<UndoHistoryState & UndoHistoryActions>
     set({ actions: [] });
   },
 }));
+
+export type { GenericPropSnapshot } from './genericPropsStore';

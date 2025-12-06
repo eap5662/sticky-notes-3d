@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useSelection } from '@/canvas/hooks/useSelection';
 import { useGenericProp } from '@/canvas/hooks/useGenericProps';
+import { useActiveDeskId } from '@/canvas/hooks/useDeskProp';
 
 const DISPLAY_DURATION_MS = 3500;
 
@@ -9,8 +10,9 @@ export default function DeskDriveHint() {
   const selection = useSelection();
   const selectedGenericId = selection?.kind === 'generic' ? selection.id : null;
   const selectedProp = useGenericProp(selectedGenericId);
+  const activeDeskId = useActiveDeskId();
 
-  const isDeskSelected = selectedProp?.catalogId === 'desk-default';
+  const isDeskSelected = selectedProp?.id === activeDeskId;
   const isDraggingDesk = isDeskSelected && selectedProp?.status === 'dragging';
 
   const [visible, setVisible] = useState(false);
